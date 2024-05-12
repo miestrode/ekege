@@ -1,0 +1,13 @@
+[package]
+name = "ekege"
+version = "0.1.0"
+edition = "2021"
+description = "It's an e-graph library!"
+authors = ["Yoav Grimland <miestrode@proton.me>"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ekege-macros = { path = "../ekege-macros/" }
+bumpalo = { version = "3.16.0", features = ["allocator_api"] }
+rustc-hash = "1.1.0"
