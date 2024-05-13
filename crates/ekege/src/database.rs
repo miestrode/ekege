@@ -111,7 +111,7 @@ impl Database {
         self.insert_map_member(const_map, vec![])
     }
 
-    pub fn filter(
+    fn filter(
         &mut self,
         query: &SimpleQuery,
         variable: QueryVariable,
@@ -132,7 +132,7 @@ impl Database {
                     .iter()
                     .map_while(|argument| {
                         if let MapPatternArgument::Term(term_id) = argument {
-                            Some(term_id)
+                            Some(self.term_types.canonicalize(*term_id))
                         } else {
                             None
                         }
@@ -140,7 +140,7 @@ impl Database {
                     .collect::<Vec<_>>();
                 let prefix_length = prefix.len();
 
-                map.query(prefix)
+                map.query(prefix.iter())
                     .unwrap()
                     .items()
                     .filter_map(|possible_match| {
@@ -221,22 +221,54 @@ impl Database {
     }
 
     pub fn unify(&mut self, term_id_a: TermId, term_id_b: TermId) -> TermId {
-        let new_id = self.term_types.unify(term_id_a, term_id_b);
+        let canonical_term_id_a = self.term_types.canonicalize(term_id_a);
+        let canonical_term_id_b = self.term_types.canonicalize(term_id_b);
+
+        let new_id = self
+            .term_types
+            .unify(canonical_term_id_a, canonical_term_id_b);
 
         self.pending_rewrites.push(PendingRewrite {
-            term_id: term_id_a,
+            term_id: canonical_term_id_a,
             new_term_id: new_id,
         });
 
         self.pending_rewrites.push(PendingRewrite {
-            term_id: term_id_b,
+            term_id: canonical_term_id_b,
             new_term_id: new_id,
         });
 
         new_id
     }
 
-    pub fn rebuild_map(&mut self, map: &mut Trie<TermId>) {
+    fn rebuild_map(
+        map: &mut Trie<TermId>,
+        substitution: &HashMap<TermId, TermId>,
+        to_unify: &mut Vec<(TermId, TermId)>,
+    ) {
+        for (value, subtrie) in map.entries.siphon(substitution).collect::<Vec<_>>() {
+            map.entries
+                .get_mut_or_initialize(*value)
+                .entries
+                .extend(subtrie.entries.into_iter());
+        }
+
+        let mut entries = map.entries.iter_mut();
+
+        if let Some((first_value, entry)) = entries.next() {
+            Self::rebuild_map(entry, substitution, to_unify);
+
+            for (value, entry) in entries {
+                if entry.entries.is_empty() {
+                    to_unify.push((*first_value, *value));
+                }
+
+                Self::rebuild_map(entry, substitution, to_unify);
+            }
+        }
+    }
+
+    fn rebuild_all_maps_once(&mut self) {
         let substitution = &self
             .pending_rewrites
             .drain(..)
@@ -248,58 +280,20 @@ impl Database {
             )
             .collect();
 
-        for (value, subtrie) in map.entries.siphon(substitution).collect::<Vec<_>>() {
-            map.entries
-                .get_mut_or_initialize(value.clone())
-                .entries
-                .extend(subtrie.entries.into_iter());
+        let mut to_unify = Vec::new();
+
+        for map in self.maps.values_mut() {
+            Self::rebuild_map(&mut map.members, substitution, &mut to_unify);
         }
 
-        let mut entries = map.entries.iter_mut();
-
-        if let Some((first_value, entry)) = entries.next() {
-            for (value, entry) in entries {
-                if entry.entries.is_empty() {
-                    self.unify(*first_value, *value);
-                }
-
-                self.rebuild_map(entry.replace(substitution, database);
-            }
+        for (term_id_a, term_id_b) in to_unify {
+            self.unify(term_id_a, term_id_b);
         }
     }
 
     pub fn rebuild(&mut self) {
-        for map in self.maps.values_mut() {
-            let substitution = &self
-                .pending_rewrites
-                .drain(..)
-                .map(
-                    |PendingRewrite {
-                         term_id,
-                         new_term_id,
-                     }| (term_id, new_term_id),
-                )
-                .collect();
-
-            for (value, subtrie) in map.members.entries.siphon(substitution).collect::<Vec<_>>() {
-                map.members
-                    .entries
-                    .get_mut_or_initialize(value.clone())
-                    .entries
-                    .extend(subtrie.entries.into_iter());
-            }
-
-            let mut entries = map.members.entries.iter_mut();
-
-            if let Some((first_value, entry)) = entries.next() {
-                for (value, entry) in entries {
-                    if entry.entries.is_empty() {
-                        self.unify(*first_value, *value);
-                    }
-
-                    entry.replace(substitution, database);
-                }
-            }
+        while !self.pending_rewrites.is_empty() {
+            self.rebuild_all_maps_once();
         }
     }
 }

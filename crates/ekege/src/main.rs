@@ -28,28 +28,32 @@ fn main() {
 
     let boolean = database.new_type();
 
-    let x = database.new_constant(boolean);
-
     let or = database.insert_map(map! { (boolean, boolean) -> boolean });
-    let and = database.insert_map(map! { (boolean, boolean) -> boolean });
 
-    database.insert_map_term(map_term! { and(x, or(x, x)) });
+    let x = database.new_constant(boolean);
+    let y = database.new_constant(boolean);
+
+    let or_x_x = database.insert_map_term(map_term! { or(x, x) });
+    database.insert_map_term(map_term! { or(x, y) });
+
+    database.unify(x, or_x_x);
+    database.rebuild();
 
     for substitution in database.search(SimpleQuery::new(vec![
         MapPattern::new(
             or,
             vec![
-                MapPatternArgument::Variable(Id(1)),
-                MapPatternArgument::Variable(Id(1)),
                 MapPatternArgument::Variable(Id(0)),
+                MapPatternArgument::Variable(Id(1)),
+                MapPatternArgument::Variable(Id(2)),
             ],
         ),
         MapPattern::new(
-            and,
+            or,
             vec![
-                MapPatternArgument::Variable(Id(3)),
-                MapPatternArgument::Variable(Id(0)),
                 MapPatternArgument::Variable(Id(2)),
+                MapPatternArgument::Variable(Id(3)),
+                MapPatternArgument::Variable(Id(4)),
             ],
         ),
     ])) {

@@ -52,8 +52,6 @@ pub(crate) trait TrieMap: Sized {
 
     fn get(&self, key: &Self::Key) -> Option<&ValueTrie<Self>>;
 
-    fn get_mut(&mut self, key: &Self::Key) -> Option<&mut ValueTrie<Self>>;
-
     fn get_mut_or_initialize(&mut self, key: Self::Key) -> &mut ValueTrie<Self>;
 
     fn iter(&self) -> impl Iterator<Item = (&Self::Key, &ValueTrie<Self>)>;
@@ -61,8 +59,6 @@ pub(crate) trait TrieMap: Sized {
     fn iter_mut(&mut self) -> impl Iterator<Item = (&Self::Key, &mut ValueTrie<Self>)>;
 
     fn into_iter(self) -> impl Iterator<Item = (Self::Key, ValueTrie<Self>)>;
-
-    fn remove(&mut self, key: &Self::Key) -> Option<ValueTrie<Self>>;
 
     fn extend(&mut self, iter: impl IntoIterator<Item = (Self::Key, ValueTrie<Self>)>);
 
@@ -92,10 +88,6 @@ impl<T: Hash + Eq> TrieMap for FxTrieHashMap<T> {
         self.map.get(key)
     }
 
-    fn get_mut(&mut self, key: &Self::Key) -> Option<&mut ValueTrie<Self>> {
-        self.map.get_mut(key)
-    }
-
     fn get_mut_or_initialize(&mut self, key: Self::Key) -> &mut ValueTrie<Self> {
         self.map.entry(key).or_default()
     }
@@ -110,10 +102,6 @@ impl<T: Hash + Eq> TrieMap for FxTrieHashMap<T> {
 
     fn into_iter(self) -> impl Iterator<Item = (Self::Key, ValueTrie<Self>)> {
         self.map.into_iter()
-    }
-
-    fn remove(&mut self, key: &Self::Key) -> Option<ValueTrie<Self>> {
-        self.map.remove(key)
     }
 
     fn extend(&mut self, iter: impl IntoIterator<Item = (Self::Key, ValueTrie<Self>)>) {
