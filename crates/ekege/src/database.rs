@@ -1,37 +1,24 @@
-// SPDX-FileCopyrightText: 2024 Yoav Grimland <miestrode@proton.me>
-// SPDX-License-Identifier: Apache-2.0
-//
-// Copyright 2024 Yoav Grimland miestrode@proton.me
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// 	https://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 use std::collections::{HashMap, HashSet};
 
 use crate::{
     id::{Id, IdGenerator},
     map::{map, Map, MapId},
-    query::{MapPatternArgument, QueryVariable, SimpleQuery},
+    rule::{
+        QueryVariable, Rule, SimpleMapPatternArgument, SimpleQuery, SimpleRule, SimpleRulePayload,
+    },
     term::{MapTerm, Term, TermId, TermTable},
     trie::{Trie, TrieMap},
 };
 
 pub type TypeId = Id; // User-defined types
 
+#[derive(Debug)]
 pub struct PendingRewrite {
     pub(crate) term_id: TermId,
     pub(crate) new_term_id: TermId,
 }
 
+#[derive(Debug)]
 pub struct Database {
     id_generator: IdGenerator,
     term_types: TermTable<TypeId>,
@@ -50,7 +37,7 @@ impl Database {
     }
 
     pub fn insert_map(&mut self, map: Map) -> MapId {
-        let id = self.id_generator.gen();
+        let id = self.id_generator.generate_id();
 
         self.maps.insert(id, map);
 
@@ -62,7 +49,7 @@ impl Database {
     }
 
     pub fn new_type(&mut self) -> TypeId {
-        self.id_generator.gen()
+        self.id_generator.generate_id()
     }
 
     fn insert_map_member(&mut self, map_id: MapId, mut arguments: Vec<TermId>) -> TermId {
@@ -117,12 +104,13 @@ impl Database {
         variable: QueryVariable,
         reordered_maps: &[Trie<TermId>],
     ) -> HashSet<TermId> {
+        println!("{query:?}");
         // TODO: Optimize this:
         // - Don't search members whose output would be a class we already rejected
         // - Order the patterns to reject more things using some heuristic
         // - Use more optimal data structures
         let mut pattern_matches = query
-            .patterns
+            .map_patterns
             .iter()
             .zip(reordered_maps)
             .filter(|(pattern, _)| pattern.includes(variable))
@@ -131,7 +119,7 @@ impl Database {
                     .arguments
                     .iter()
                     .map_while(|argument| {
-                        if let MapPatternArgument::Term(term_id) = argument {
+                        if let SimpleMapPatternArgument::Term(term_id) = argument {
                             Some(self.term_types.canonicalize(*term_id))
                         } else {
                             None
@@ -189,7 +177,7 @@ impl Database {
             let mut substitutions = Vec::new();
 
             for initialization in self.filter(query, variable, reordered_maps) {
-                let unsubstitution = query.substitute(variable, initialization);
+                let unsubstitution = query.substitute_variable(variable, initialization);
 
                 substitutions.extend(self.search_inner(query, reordered_maps).into_iter().map(
                     |mut substitution| {
@@ -199,16 +187,16 @@ impl Database {
                     },
                 ));
 
-                query.unsubstitute(variable, unsubstitution);
+                query.unsubstitute_variable(variable, unsubstitution);
             }
 
             substitutions
         }
     }
 
-    pub fn search(&mut self, mut query: SimpleQuery) -> Vec<HashMap<QueryVariable, TermId>> {
+    fn search(&mut self, mut query: SimpleQuery) -> Vec<HashMap<QueryVariable, TermId>> {
         let reordered_maps = query
-            .patterns
+            .map_patterns
             .iter_mut()
             .map(|pattern| {
                 self.maps[&pattern.map_id]
@@ -218,6 +206,31 @@ impl Database {
             .collect::<Vec<_>>();
 
         self.search_inner(&mut query, &reordered_maps)
+    }
+
+    pub fn run_rule(&mut self, rule: Rule) {
+        let SimpleRule { query, payloads } = SimpleRule::from(rule);
+
+        for substitution in self.search(query) {
+            let mut created_terms = Vec::new();
+
+            for payload in &payloads {
+                match payload {
+                    SimpleRulePayload::Term(term) => {
+                        created_terms.push(self.insert_map_member(
+                            term.map_id,
+                            term.substitute(&substitution, &created_terms),
+                        ));
+                    }
+                    SimpleRulePayload::Union(argument_a, argument_b) => {
+                        self.unify(
+                            argument_a.substitute(&substitution, &created_terms),
+                            argument_b.substitute(&substitution, &created_terms),
+                        );
+                    }
+                }
+            }
+        }
     }
 
     pub fn unify(&mut self, term_id_a: TermId, term_id_b: TermId) -> TermId {
@@ -295,6 +308,10 @@ impl Database {
         while !self.pending_rewrites.is_empty() {
             self.rebuild_all_maps_once();
         }
+    }
+
+    pub fn equal(&mut self, term_id_a: TermId, term_id_b: TermId) -> bool {
+        self.term_types.canonicalize(term_id_a) == self.term_types.canonicalize(term_id_b)
     }
 }
 
