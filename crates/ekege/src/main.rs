@@ -1,4 +1,4 @@
-use ekege::{database::Database, map::map, rule::rule, term::map_term};
+use ekege::{database::Database, map::map, rule::rewrite, term::map_term};
 
 fn main() {
     let mut database = Database::new();
@@ -13,7 +13,7 @@ fn main() {
 
     database.insert_map_term(map_term! { or(x, or(y, z)) });
 
-    database.run_rule(rule! { or('x, 'y) -> or('y, 'x) == or('x, 'y) });
+    database.run_rule(rewrite! { or('x, 'y) -> or('y, 'x) });
     database.rebuild();
 
     println!("{database:#?}");

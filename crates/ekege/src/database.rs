@@ -104,7 +104,6 @@ impl Database {
         variable: QueryVariable,
         reordered_maps: &[Trie<TermId>],
     ) -> HashSet<TermId> {
-        println!("{query:?}");
         // TODO: Optimize this:
         // - Don't search members whose output would be a class we already rejected
         // - Order the patterns to reject more things using some heuristic

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, iter};
 
-pub use ekege_macros::rule;
+pub use ekege_macros::{rewrite, rule};
 
 use crate::{
     id::{Id, IdGenerator},

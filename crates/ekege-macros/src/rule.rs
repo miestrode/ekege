@@ -5,6 +5,7 @@ use syn::{
     token, Ident, Lifetime, Token,
 };
 
+#[derive(Clone)]
 enum MapPatternArgument {
     Variable(String),
     Term(Ident),
@@ -40,7 +41,8 @@ impl Parse for MapPatternArgument {
     }
 }
 
-struct MapPattern {
+#[derive(Clone)]
+pub(crate) struct MapPattern {
     map_id: Ident,
     arguments: Vec<MapPatternArgument>,
 }
@@ -75,8 +77,8 @@ impl Parse for MapPattern {
     }
 }
 
-struct Query {
-    map_patterns: Vec<MapPattern>,
+pub(crate) struct Query {
+    pub(crate) map_patterns: Vec<MapPattern>,
 }
 
 impl Query {
@@ -106,7 +108,7 @@ impl Parse for Query {
     }
 }
 
-enum RulePayload {
+pub(crate) enum RulePayload {
     Term(MapPattern),
     Union(MapPattern, MapPattern),
 }
@@ -146,8 +148,8 @@ impl Parse for RulePayload {
 }
 
 pub(crate) struct Rule {
-    query: Query,
-    payloads: Vec<RulePayload>,
+    pub(crate) query: Query,
+    pub(crate) payloads: Vec<RulePayload>,
 }
 
 impl Rule {
