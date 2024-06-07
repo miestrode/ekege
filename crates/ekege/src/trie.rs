@@ -1,7 +1,11 @@
-use std::{collections::HashMap, fmt::Debug, hash::Hash};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    hash::{BuildHasherDefault, Hash},
+};
 
 use bumpalo::Bump;
-use rustc_hash::FxHashMap;
+use rustc_hash::FxHasher;
 
 pub(crate) fn reordering_as_swaps(reordering: &[usize]) -> Vec<(usize, usize)> {
     let mut positions = (0..reordering.len()).collect::<Vec<_>>();
@@ -55,7 +59,7 @@ pub(crate) trait TrieMap: Sized {
 
 #[derive(Debug)]
 pub(crate) struct FxTrieHashMap<T: Hash + Eq> {
-    map: FxHashMap<T, Trie<T>>,
+    map: hashbrown::HashMap<T, Trie<T>, BuildHasherDefault<FxHasher>>,
 }
 
 impl<T: Hash + Eq> TrieMap for FxTrieHashMap<T> {
@@ -63,7 +67,7 @@ impl<T: Hash + Eq> TrieMap for FxTrieHashMap<T> {
 
     fn new() -> Self {
         Self {
-            map: FxHashMap::default(),
+            map: hashbrown::HashMap::default(),
         }
     }
 
@@ -152,7 +156,7 @@ impl<T: Clone + Eq + Hash, M: TrieMap<Key = T>> Trie<T, M> {
         &'a self,
         arena: &'a Bump,
         depth: usize,
-    ) -> impl Iterator<Item = Vec<&T, &'a Bump>> {
+    ) -> impl Iterator<Item = allocator_api2::vec::Vec<&T, &'a Bump>> {
         self.entries.iter().flat_map(move |(key, entry)| {
             let mut result = entry
                 .items_in_bump(arena, depth)
@@ -163,7 +167,7 @@ impl<T: Clone + Eq + Hash, M: TrieMap<Key = T>> Trie<T, M> {
                 .collect::<Vec<_>>();
 
             if result.is_empty() {
-                let mut item = Vec::with_capacity_in(depth, arena);
+                let mut item = allocator_api2::vec::Vec::with_capacity_in(depth, arena);
                 item.push(key);
 
                 result.push(item);

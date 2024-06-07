@@ -2,6 +2,10 @@
 members = ["crates/*"]
 resolver = "2"
 
+[workspace.dependencies]
+ekege = { path = "./crates/ekege/" }
+ekege-macros = { path = "./crates/ekege-macros" }
+
 [profile.release]
 lto = true
 codegen-units = 1

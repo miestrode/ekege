@@ -21,8 +21,8 @@ pub struct PendingRewrite {
 #[derive(Debug)]
 pub struct Database {
     id_generator: IdGenerator,
-    term_types: TermTable<TypeId>,
-    maps: HashMap<MapId, Map>,
+    pub(crate) term_types: TermTable<TypeId>,
+    pub(crate) maps: HashMap<MapId, Map>,
     pending_rewrites: Vec<PendingRewrite>,
 }
 
