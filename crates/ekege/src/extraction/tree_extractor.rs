@@ -72,6 +72,8 @@ impl TreeExtractor {
         maps: &HashMap<&MapId, TermIdMapMembers>,
         term_id: TermId,
     ) -> u32 {
+        visited.insert(term_id);
+
         let lowest_cost_term = maps
             .iter()
             .filter_map(|(&&map_id, map)| {
@@ -109,7 +111,7 @@ impl TreeExtractor {
                                                 cost
                                             })
                                             .sum::<u32>()
-                                            + self.costs[&map_id],
+                                            + self.cost(map_id),
                                         term: SimpleExtractedTerm {
                                             map_id,
                                             arguments: member.into_iter().copied().collect(),
@@ -124,6 +126,8 @@ impl TreeExtractor {
             .min_by_key(|lowest_cost_term| lowest_cost_term.cost)
             .unwrap();
 
+        visited.remove(&term_id);
+
         lowest_cost_terms
             .lowest_cost_terms
             .entry(term_id)
@@ -135,7 +139,7 @@ impl TreeExtractor {
 impl Extractor for TreeExtractor {
     #[allow(refining_impl_trait)]
     fn extract(&self, database: &mut Database, term_id: TermId) -> ExtractedTerm {
-        let term_id = database.term_types.canonicalize(term_id);
+        let term_id = database.canonicalize(term_id);
 
         let maps = database
             .maps

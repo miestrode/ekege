@@ -10,7 +10,7 @@ use crate::{
     trie::{Trie, TrieMap},
 };
 
-pub type TypeId = Id; // User-defined types
+pub type TypeId = Id;
 
 #[derive(Debug)]
 pub struct PendingRewrite {
@@ -108,18 +108,26 @@ impl Database {
         // - Don't search members whose output would be a class we already rejected
         // - Order the patterns to reject more things using some heuristic
         // - Use more optimal data structures
-        let mut pattern_matches = query
+        let mut relevant_patterns = query
             .map_patterns
             .iter()
             .zip(reordered_maps)
             .filter(|(pattern, _)| pattern.includes(variable))
+            .peekable();
+
+        if relevant_patterns.peek().is_none() {
+            // Variable is free
+            return self.term_types.canonical_ids.clone();
+        }
+
+        let mut pattern_matches = relevant_patterns
             .map(|(pattern, map)| {
                 let prefix = pattern
                     .arguments
                     .iter()
                     .map_while(|argument| {
                         if let SimpleMapPatternArgument::Term(term_id) = argument {
-                            Some(self.term_types.canonicalize(*term_id))
+                            Some(self.canonicalize(*term_id))
                         } else {
                             None
                         }
@@ -232,25 +240,35 @@ impl Database {
         }
     }
 
-    pub fn unify(&mut self, term_id_a: TermId, term_id_b: TermId) -> TermId {
-        let canonical_term_id_a = self.term_types.canonicalize(term_id_a);
-        let canonical_term_id_b = self.term_types.canonicalize(term_id_b);
+    fn add_rewrite(&mut self, term_id: TermId, new_term_id: TermId) {
+        if term_id != new_term_id {
+            self.pending_rewrites.push(PendingRewrite {
+                term_id,
+                new_term_id,
+            });
+        }
+    }
 
-        let new_id = self
+    pub fn canonicalize(&mut self, term_id: TermId) -> TermId {
+        self.term_types.canonicalize(term_id)
+    }
+
+    pub fn unify(&mut self, term_id_a: TermId, term_id_b: TermId) -> TermId {
+        let canonical_term_id_a = self.canonicalize(term_id_a);
+        let canonical_term_id_b = self.canonicalize(term_id_b);
+
+        if canonical_term_id_a == canonical_term_id_b {
+            return canonical_term_id_a;
+        }
+
+        let new_term_id = self
             .term_types
             .unify(canonical_term_id_a, canonical_term_id_b);
 
-        self.pending_rewrites.push(PendingRewrite {
-            term_id: canonical_term_id_a,
-            new_term_id: new_id,
-        });
+        self.add_rewrite(canonical_term_id_a, new_term_id);
+        self.add_rewrite(canonical_term_id_b, new_term_id);
 
-        self.pending_rewrites.push(PendingRewrite {
-            term_id: canonical_term_id_b,
-            new_term_id: new_id,
-        });
-
-        new_id
+        new_term_id
     }
 
     fn rebuild_map(
@@ -268,34 +286,57 @@ impl Database {
         let mut entries = map.entries.iter_mut();
 
         if let Some((first_value, entry)) = entries.next() {
-            Self::rebuild_map(entry, substitution, to_unify);
-
-            for (value, entry) in entries {
-                if entry.entries.is_empty() {
+            if entry.entries.is_empty() {
+                // This means the term ids at this stage are for whole map members
+                for (value, _) in entries {
                     to_unify.push((*first_value, *value));
                 }
-
+            } else {
                 Self::rebuild_map(entry, substitution, to_unify);
+
+                for (_, entry) in entries {
+                    Self::rebuild_map(entry, substitution, to_unify);
+                }
             }
         }
     }
 
     fn rebuild_all_maps_once(&mut self) {
-        let substitution = &self
+        let original_substitution = self
+            .pending_rewrites
+            .iter()
+            .map(
+                |&PendingRewrite {
+                     term_id,
+                     new_term_id,
+                 }| (term_id, new_term_id),
+            )
+            .collect::<HashMap<_, _>>();
+
+        let substitution = self
             .pending_rewrites
             .drain(..)
             .map(
                 |PendingRewrite {
                      term_id,
-                     new_term_id,
-                 }| (term_id, new_term_id),
+                     mut new_term_id,
+                 }| {
+                    // Due to the union-find used for generating the pending rewrites, cycles are
+                    // impossible
+                    while let Some(substituted_new_term_id) =
+                        original_substitution.get(&new_term_id)
+                    {
+                        new_term_id = *substituted_new_term_id;
+                    }
+                    (term_id, new_term_id)
+                },
             )
             .collect();
 
         let mut to_unify = Vec::new();
 
         for map in self.maps.values_mut() {
-            Self::rebuild_map(&mut map.members, substitution, &mut to_unify);
+            Self::rebuild_map(&mut map.members, &substitution, &mut to_unify);
         }
 
         for (term_id_a, term_id_b) in to_unify {
@@ -310,7 +351,7 @@ impl Database {
     }
 
     pub fn equal(&mut self, term_id_a: TermId, term_id_b: TermId) -> bool {
-        self.term_types.canonicalize(term_id_a) == self.term_types.canonicalize(term_id_b)
+        self.canonicalize(term_id_a) == self.canonicalize(term_id_b)
     }
 }
 

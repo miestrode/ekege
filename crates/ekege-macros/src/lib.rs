@@ -3,6 +3,7 @@ use std::env;
 use map::Map;
 use proc_macro2::Span;
 use proc_macro_crate::{crate_name, FoundCrate};
+use quote::ToTokens;
 use rewrite::Rewrite;
 use rule::Rule;
 use syn::{parse_macro_input, Ident};
@@ -13,7 +14,7 @@ mod rewrite;
 mod rule;
 mod term;
 
-fn crate_root() -> Ident {
+pub(crate) fn crate_root() -> Ident {
     Ident::new(
         &if env::var("CARGO_PKG_NAME").unwrap() == "ekege" {
             String::from("ekege")
@@ -32,26 +33,26 @@ fn crate_root() -> Ident {
 pub fn map_term(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(tokens as MapTerm);
 
-    proc_macro::TokenStream::from(input.construct(&crate_root()))
+    proc_macro::TokenStream::from(input.to_token_stream())
 }
 
 #[proc_macro]
 pub fn map(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(tokens as Map);
 
-    proc_macro::TokenStream::from(input.construct(&crate_root()))
+    proc_macro::TokenStream::from(input.to_token_stream())
 }
 
 #[proc_macro]
 pub fn rule(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(tokens as Rule);
 
-    proc_macro::TokenStream::from(input.construct(&crate_root()))
+    proc_macro::TokenStream::from(input.to_token_stream())
 }
 
 #[proc_macro]
 pub fn rewrite(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(tokens as Rewrite);
 
-    proc_macro::TokenStream::from(input.construct(&crate_root()))
+    proc_macro::TokenStream::from(input.to_token_stream())
 }

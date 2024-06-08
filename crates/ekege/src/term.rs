@@ -1,3 +1,8 @@
+use std::{
+    collections::HashSet,
+    ops::{Index, IndexMut},
+};
+
 pub use ekege_macros::map_term;
 
 use crate::{id::Id, map::MapId};
@@ -22,8 +27,6 @@ impl MapTerm {
     }
 }
 
-use std::ops::{Index, IndexMut};
-
 #[derive(Debug)]
 pub(crate) struct Node<T> {
     parent_id: TermId,
@@ -34,6 +37,7 @@ pub(crate) struct Node<T> {
 #[derive(Debug)]
 pub(crate) struct TermTable<T> {
     nodes: Vec<Node<T>>,
+    pub(crate) canonical_ids: HashSet<TermId>,
 }
 
 impl<T> Index<TermId> for TermTable<T> {
@@ -52,7 +56,10 @@ impl<T> IndexMut<TermId> for TermTable<T> {
 
 impl<T> TermTable<T> {
     pub(crate) fn new() -> Self {
-        Self { nodes: vec![] }
+        Self {
+            nodes: vec![],
+            canonical_ids: HashSet::new(),
+        }
     }
 
     fn parent_id(&self, term_id: TermId) -> Option<TermId> {
@@ -70,6 +77,8 @@ impl<T> TermTable<T> {
             value,
         });
 
+        self.canonical_ids.insert(term_id);
+
         term_id
     }
 
@@ -86,8 +95,12 @@ impl<T> TermTable<T> {
         let root_id_b = self.canonicalize(term_id_b);
 
         let [larger_root_id, smaller_root_id] = if self[root_id_a].size > self[root_id_b].size {
+            self.canonical_ids.remove(&root_id_b);
+
             [root_id_a, root_id_b]
         } else {
+            self.canonical_ids.remove(&root_id_a);
+
             [root_id_b, root_id_a]
         };
 

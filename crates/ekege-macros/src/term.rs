@@ -1,24 +1,27 @@
-use quote::quote;
+use quote::{quote, ToTokens, TokenStreamExt};
 use syn::{
     parenthesized,
     parse::{Parse, ParseStream},
     token, Ident, Token,
 };
 
+use crate::crate_root;
+
 enum Term {
     Map(MapTerm),
     Term(Ident),
 }
 
-impl Term {
-    fn construct(&self, crate_root: &Ident) -> proc_macro2::TokenStream {
-        match self {
+impl ToTokens for Term {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let crate_root = crate_root();
+
+        tokens.append_all(match self {
             Term::Map(map) => {
-                let map = map.construct(crate_root);
                 quote! { #crate_root::term::Term::Map(#map) }
             }
             Term::Term(term_id) => quote! { #crate_root::term::Term::Term(#term_id) },
-        }
+        });
     }
 }
 
@@ -37,17 +40,16 @@ pub(crate) struct MapTerm {
     arguments: Vec<Term>,
 }
 
-impl MapTerm {
-    pub(crate) fn construct(&self, crate_root: &Ident) -> proc_macro2::TokenStream {
-        let map = &self.map_id;
-        let children = self
-            .arguments
-            .iter()
-            .map(|argument| argument.construct(crate_root));
+impl ToTokens for MapTerm {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let crate_root = crate_root();
 
-        quote! {
-            #crate_root::term::MapTerm::new(#map, vec![#(#children),*])
-        }
+        let map_id = &self.map_id;
+        let arguments = &self.arguments;
+
+        tokens.append_all(quote! {
+            #crate_root::term::MapTerm::new(#map_id, vec![#(#arguments),*])
+        });
     }
 }
 

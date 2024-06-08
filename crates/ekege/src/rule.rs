@@ -9,7 +9,7 @@ use crate::{
     trie,
 };
 
-pub type QueryVariable = Id; // Pattern variables
+pub type QueryVariable = Id;
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub(crate) enum SimpleMapPatternArgument {
@@ -131,7 +131,7 @@ impl SimpleQuery {
 #[derive(Debug)]
 pub enum MapPatternArgument {
     Variable(String),
-    Term(TermId),
+    TermId(TermId),
     MapPattern(MapPattern),
 }
 
@@ -170,7 +170,7 @@ impl Variables {
             .or_insert_with(|| self.id_generator.generate_id())
     }
 
-    fn into_variables(mut self) -> Vec<QueryVariable> {
+    fn into_query_variables(mut self) -> Vec<QueryVariable> {
         (0..self.id_generator.generate_id().0).map(Id).collect()
     }
 }
@@ -185,7 +185,7 @@ impl MapPatternArgument {
             MapPatternArgument::Variable(name) => {
                 SimpleMapPatternArgument::Variable(variables.get_or_insert_variable(name))
             }
-            MapPatternArgument::Term(term_id) => SimpleMapPatternArgument::Term(term_id),
+            MapPatternArgument::TermId(term_id) => SimpleMapPatternArgument::Term(term_id),
             MapPatternArgument::MapPattern(map_pattern) => {
                 map_pattern.into_simple_map_patterns(variables, simple_map_patterns)
             }
@@ -203,7 +203,7 @@ impl MapPatternArgument {
                     SimpleMapPatternArgument::Variable(variables.get_or_insert_variable(name)),
                 )
             }
-            MapPatternArgument::Term(term_id) => {
+            MapPatternArgument::TermId(term_id) => {
                 SimpleRulePayloadArgument::SimpleMapPatternArgument(SimpleMapPatternArgument::Term(
                     term_id,
                 ))
@@ -330,7 +330,7 @@ pub struct SimpleRule {
 #[derive(Debug)]
 pub enum RulePayload {
     Term(MapPattern),
-    Union(MapPattern, MapPattern),
+    Union(MapPatternArgument, MapPatternArgument),
 }
 
 #[derive(Debug)]
@@ -349,11 +349,11 @@ impl RulePayload {
             RulePayload::Term(map_pattern) => {
                 map_pattern.into_simple_rule_payloads(variables, simple_rule_payloads);
             }
-            RulePayload::Union(map_pattern_a, map_pattern_b) => {
-                let variable_a =
-                    map_pattern_a.into_simple_rule_payloads(variables, simple_rule_payloads);
-                let variable_b =
-                    map_pattern_b.into_simple_rule_payloads(variables, simple_rule_payloads);
+            RulePayload::Union(map_pattern_argument_a, map_pattern_argument_b) => {
+                let variable_a = map_pattern_argument_a
+                    .into_simple_rule_payloads(variables, simple_rule_payloads);
+                let variable_b = map_pattern_argument_b
+                    .into_simple_rule_payloads(variables, simple_rule_payloads);
 
                 simple_rule_payloads.push(SimpleRulePayload::Union(variable_a, variable_b));
             }
@@ -376,7 +376,7 @@ impl From<Rule> for SimpleRule {
 
         let simple_query = SimpleQuery {
             map_patterns: simple_map_patterns,
-            variables: variables.into_variables(),
+            variables: variables.into_query_variables(),
         };
 
         Self {

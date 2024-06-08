@@ -1,23 +1,27 @@
-use quote::quote;
+use quote::{quote, ToTokens, TokenStreamExt};
 use syn::{
     parenthesized,
     parse::{Parse, ParseStream},
     Ident, Token,
 };
 
+use crate::crate_root;
+
 pub(crate) struct Map {
     input_tys: Vec<Ident>,
     output_ty: Ident,
 }
 
-impl Map {
-    pub(crate) fn construct(&self, crate_root: &Ident) -> proc_macro2::TokenStream {
+impl ToTokens for Map {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let crate_root = crate_root();
+
         let input_tys = &self.input_tys;
         let output_ty = &self.output_ty;
 
-        quote! {
+        tokens.append_all(quote! {
             #crate_root::map::Map::new(vec![#(#input_tys),*], #output_ty)
-        }
+        });
     }
 }
 
