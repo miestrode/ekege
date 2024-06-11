@@ -1,5 +1,6 @@
 use std::env;
 
+use equivalence::Equivalence;
 use map::Map;
 use proc_macro2::Span;
 use proc_macro_crate::{crate_name, FoundCrate};
@@ -9,6 +10,7 @@ use rule::Rule;
 use syn::{parse_macro_input, Ident};
 use term::MapTerm;
 
+mod equivalence;
 mod map;
 mod rewrite;
 mod rule;
@@ -53,6 +55,13 @@ pub fn rule(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
 #[proc_macro]
 pub fn rewrite(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(tokens as Rewrite);
+
+    proc_macro::TokenStream::from(input.to_token_stream())
+}
+
+#[proc_macro]
+pub fn equivalence(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = parse_macro_input!(tokens as Equivalence);
 
     proc_macro::TokenStream::from(input.to_token_stream())
 }

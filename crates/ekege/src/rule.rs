@@ -1,6 +1,6 @@
 use std::{collections::HashMap, iter};
 
-pub use ekege_macros::{rewrite, rule};
+pub use ekege_macros::{equivalence, rewrite, rule};
 
 use crate::{
     id::{Id, IdGenerator},
@@ -54,6 +54,10 @@ impl SimpleMapPattern {
 
     pub(crate) fn last_index(&self, variable: QueryVariable) -> Option<usize> {
         self.variable_indicies(variable).last()
+    }
+
+    pub(crate) fn first_index(&self, variable: QueryVariable) -> Option<usize> {
+        self.variable_indicies(variable).next()
     }
 
     pub(crate) fn includes(&self, variable: QueryVariable) -> bool {
@@ -176,48 +180,50 @@ impl Variables {
 }
 
 impl MapPatternArgument {
-    fn into_simple_map_patterns(
-        self,
+    fn as_simple_map_patterns(
+        &self,
         variables: &mut Variables,
         simple_map_patterns: &mut Vec<SimpleMapPattern>,
     ) -> SimpleMapPatternArgument {
         match self {
             MapPatternArgument::Variable(name) => {
-                SimpleMapPatternArgument::Variable(variables.get_or_insert_variable(name))
+                SimpleMapPatternArgument::Variable(variables.get_or_insert_variable(name.clone()))
             }
-            MapPatternArgument::TermId(term_id) => SimpleMapPatternArgument::Term(term_id),
+            MapPatternArgument::TermId(term_id) => SimpleMapPatternArgument::Term(*term_id),
             MapPatternArgument::MapPattern(map_pattern) => {
-                map_pattern.into_simple_map_patterns(variables, simple_map_patterns)
+                map_pattern.as_simple_map_patterns(variables, simple_map_patterns)
             }
         }
     }
 
-    fn into_simple_rule_payloads(
-        self,
+    fn as_simple_rule_payloads(
+        &self,
         variables: &mut Variables,
         simple_rule_payloads: &mut Vec<SimpleRulePayload>,
     ) -> SimpleRulePayloadArgument {
         match self {
             MapPatternArgument::Variable(name) => {
                 SimpleRulePayloadArgument::SimpleMapPatternArgument(
-                    SimpleMapPatternArgument::Variable(variables.get_or_insert_variable(name)),
+                    SimpleMapPatternArgument::Variable(
+                        variables.get_or_insert_variable(name.clone()),
+                    ),
                 )
             }
             MapPatternArgument::TermId(term_id) => {
                 SimpleRulePayloadArgument::SimpleMapPatternArgument(SimpleMapPatternArgument::Term(
-                    term_id,
+                    *term_id,
                 ))
             }
             MapPatternArgument::MapPattern(map_pattern) => {
-                map_pattern.into_simple_rule_payloads(variables, simple_rule_payloads)
+                map_pattern.as_simple_rule_payloads(variables, simple_rule_payloads)
             }
         }
     }
 }
 
 impl MapPattern {
-    fn into_simple_map_patterns(
-        self,
+    fn as_simple_map_patterns(
+        &self,
         variables: &mut Variables,
         simple_map_patterns: &mut Vec<SimpleMapPattern>,
     ) -> SimpleMapPatternArgument {
@@ -227,8 +233,8 @@ impl MapPattern {
         let root_map_pattern = SimpleMapPattern::new(
             self.map_id,
             self.arguments
-                .into_iter()
-                .map(|argument| argument.into_simple_map_patterns(variables, simple_map_patterns))
+                .iter()
+                .map(|argument| argument.as_simple_map_patterns(variables, simple_map_patterns))
                 .chain(iter::once(new_variable))
                 .collect(),
         );
@@ -238,8 +244,8 @@ impl MapPattern {
         new_variable
     }
 
-    fn into_simple_rule_payloads(
-        self,
+    fn as_simple_rule_payloads(
+        &self,
         variables: &mut Variables,
         simple_rule_payloads: &mut Vec<SimpleRulePayload>,
     ) -> SimpleRulePayloadArgument {
@@ -247,8 +253,8 @@ impl MapPattern {
             map_id: self.map_id,
             arguments: self
                 .arguments
-                .into_iter()
-                .map(|argument| argument.into_simple_rule_payloads(variables, simple_rule_payloads))
+                .iter()
+                .map(|argument| argument.as_simple_rule_payloads(variables, simple_rule_payloads))
                 .collect(),
         });
 
@@ -261,13 +267,13 @@ impl MapPattern {
 }
 
 impl Query {
-    fn into_simple_map_patterns(
-        self,
+    fn as_simple_map_patterns(
+        &self,
         variables: &mut Variables,
         simple_map_patterns: &mut Vec<SimpleMapPattern>,
     ) {
-        for map_pattern in self.map_patterns {
-            map_pattern.into_simple_map_patterns(variables, simple_map_patterns);
+        for map_pattern in &self.map_patterns {
+            map_pattern.as_simple_map_patterns(variables, simple_map_patterns);
         }
     }
 }
@@ -340,20 +346,20 @@ pub struct Rule {
 }
 
 impl RulePayload {
-    fn into_simple_rule_payloads(
-        self,
+    fn as_simple_rule_payloads(
+        &self,
         variables: &mut Variables,
         simple_rule_payloads: &mut Vec<SimpleRulePayload>,
     ) {
         match self {
             RulePayload::Term(map_pattern) => {
-                map_pattern.into_simple_rule_payloads(variables, simple_rule_payloads);
+                map_pattern.as_simple_rule_payloads(variables, simple_rule_payloads);
             }
             RulePayload::Union(map_pattern_argument_a, map_pattern_argument_b) => {
-                let variable_a = map_pattern_argument_a
-                    .into_simple_rule_payloads(variables, simple_rule_payloads);
-                let variable_b = map_pattern_argument_b
-                    .into_simple_rule_payloads(variables, simple_rule_payloads);
+                let variable_a =
+                    map_pattern_argument_a.as_simple_rule_payloads(variables, simple_rule_payloads);
+                let variable_b =
+                    map_pattern_argument_b.as_simple_rule_payloads(variables, simple_rule_payloads);
 
                 simple_rule_payloads.push(SimpleRulePayload::Union(variable_a, variable_b));
             }
@@ -361,17 +367,17 @@ impl RulePayload {
     }
 }
 
-impl From<Rule> for SimpleRule {
-    fn from(rule: Rule) -> Self {
+impl From<&Rule> for SimpleRule {
+    fn from(rule: &Rule) -> Self {
         let mut variables = Variables::new();
 
         let mut simple_map_patterns = Vec::new();
         rule.query
-            .into_simple_map_patterns(&mut variables, &mut simple_map_patterns);
+            .as_simple_map_patterns(&mut variables, &mut simple_map_patterns);
 
         let mut simple_rule_payloads = Vec::new();
-        for rule_payload in rule.payloads {
-            rule_payload.into_simple_rule_payloads(&mut variables, &mut simple_rule_payloads);
+        for rule_payload in &rule.payloads {
+            rule_payload.as_simple_rule_payloads(&mut variables, &mut simple_rule_payloads);
         }
 
         let simple_query = SimpleQuery {

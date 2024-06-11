@@ -4,7 +4,7 @@ use syn::{
     Token,
 };
 
-use crate::rule::{Query, Rule, RulePayload, RuleTerm, RuleTerms};
+use crate::rule::{Rule, RuleTerms};
 
 pub(crate) struct Rewrite {
     rule: Rule,
@@ -25,30 +25,7 @@ impl Parse for Rewrite {
         let rewrites = input.parse::<RuleTerms>()?;
 
         Ok(Self {
-            rule: Rule {
-                payloads: rule_terms
-                    .rule_terms
-                    .iter()
-                    .cloned()
-                    .zip(rewrites.rule_terms)
-                    .map(|(before_pattern, after_pattern)| {
-                        RulePayload::Union(before_pattern, after_pattern)
-                    })
-                    .collect(),
-                query: Query {
-                    map_patterns: rule_terms
-                        .rule_terms
-                        .into_iter()
-                        .filter_map(|rule_term| {
-                            if let RuleTerm::MapPattern(map_pattern) = rule_term {
-                                Some(map_pattern)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
-                },
-            },
+            rule: Rule::new_rewrite(rule_terms, rewrites),
         })
     }
 }

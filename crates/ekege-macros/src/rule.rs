@@ -80,6 +80,7 @@ impl Parse for MapPattern {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct RuleTerms {
     pub(crate) rule_terms: Vec<RuleTerm>,
 }
@@ -173,6 +174,35 @@ impl Parse for Query {
 pub(crate) struct Rule {
     pub(crate) query: Query,
     pub(crate) payloads: Vec<RulePayload>,
+}
+
+impl Rule {
+    pub(crate) fn new_rewrite(rule_terms: RuleTerms, rewrites: RuleTerms) -> Self {
+        Rule {
+            payloads: rule_terms
+                .rule_terms
+                .iter()
+                .cloned()
+                .zip(rewrites.rule_terms)
+                .map(|(before_pattern, after_pattern)| {
+                    RulePayload::Union(before_pattern, after_pattern)
+                })
+                .collect(),
+            query: Query {
+                map_patterns: rule_terms
+                    .rule_terms
+                    .into_iter()
+                    .filter_map(|rule_term| {
+                        if let RuleTerm::MapPattern(map_pattern) = rule_term {
+                            Some(map_pattern)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+            },
+        }
+    }
 }
 
 impl ToTokens for Rule {

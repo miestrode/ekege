@@ -77,50 +77,52 @@ impl TreeExtractor {
         let lowest_cost_term = maps
             .iter()
             .filter_map(|(&&map_id, map)| {
-                map.members.query([&term_id]).map(|term_id_members| {
-                    if map.arguments == 0 {
-                        vec![LowestCostTerm {
-                            cost: self.cost(map_id),
-                            term: SimpleExtractedTerm {
-                                map_id,
-                                arguments: vec![],
-                            },
-                        }]
-                    } else {
-                        term_id_members
-                            .items()
-                            .filter_map(|member| {
-                                member
-                                    .iter()
-                                    .all(|argument| !visited.contains(argument))
-                                    .then(|| LowestCostTerm {
-                                        cost: member
-                                            .iter()
-                                            .map(|&&argument| {
-                                                visited.insert(argument);
+                map.members
+                    .query_by_references([&term_id])
+                    .map(|term_id_members| {
+                        if map.arguments == 0 {
+                            vec![LowestCostTerm {
+                                cost: self.cost(map_id),
+                                term: SimpleExtractedTerm {
+                                    map_id,
+                                    arguments: vec![],
+                                },
+                            }]
+                        } else {
+                            term_id_members
+                                .items()
+                                .filter_map(|member| {
+                                    member
+                                        .iter()
+                                        .all(|argument| !visited.contains(argument))
+                                        .then(|| LowestCostTerm {
+                                            cost: member
+                                                .iter()
+                                                .map(|&&argument| {
+                                                    visited.insert(argument);
 
-                                                let cost = self.extract_inner(
-                                                    lowest_cost_terms,
-                                                    visited,
-                                                    maps,
-                                                    argument,
-                                                );
+                                                    let cost = self.extract_inner(
+                                                        lowest_cost_terms,
+                                                        visited,
+                                                        maps,
+                                                        argument,
+                                                    );
 
-                                                visited.remove(&argument);
+                                                    visited.remove(&argument);
 
-                                                cost
-                                            })
-                                            .sum::<u32>()
-                                            + self.cost(map_id),
-                                        term: SimpleExtractedTerm {
-                                            map_id,
-                                            arguments: member.into_iter().copied().collect(),
-                                        },
-                                    })
-                            })
-                            .collect::<Vec<_>>()
-                    }
-                })
+                                                    cost
+                                                })
+                                                .sum::<u32>()
+                                                + self.cost(map_id),
+                                            term: SimpleExtractedTerm {
+                                                map_id,
+                                                arguments: member.into_iter().copied().collect(),
+                                            },
+                                        })
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                    })
             })
             .flatten()
             .min_by_key(|lowest_cost_term| lowest_cost_term.cost)

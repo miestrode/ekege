@@ -17,13 +17,16 @@ pub enum Term {
 
 #[derive(Clone)]
 pub struct MapTerm {
-    pub(crate) map: MapId,
+    pub(crate) map_id: MapId,
     pub(crate) arguments: Vec<Term>,
 }
 
 impl MapTerm {
     pub fn new(map: MapId, arguments: Vec<Term>) -> Self {
-        Self { map, arguments }
+        Self {
+            map_id: map,
+            arguments,
+        }
     }
 }
 
@@ -85,6 +88,14 @@ impl<T> TermTable<T> {
     pub(crate) fn canonicalize(&mut self, mut term_id: TermId) -> TermId {
         while let Some(parent_id) = self.parent_id(term_id) {
             (term_id, self[term_id].parent_id) = (parent_id, self[parent_id].parent_id);
+        }
+
+        term_id
+    }
+
+    pub(crate) fn canonicalize_immutable(&self, mut term_id: TermId) -> TermId {
+        while let Some(parent_id) = self.parent_id(term_id) {
+            term_id = parent_id;
         }
 
         term_id

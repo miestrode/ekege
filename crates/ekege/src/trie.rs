@@ -55,6 +55,8 @@ pub(crate) trait TrieMap: Sized {
     ) -> impl Iterator<Item = (&'a T, ValueTrie<Self>)>;
 
     fn is_empty(&self) -> bool;
+
+    fn keys(&self) -> impl Iterator<Item = &Self::Key>;
 }
 
 #[derive(Debug)]
@@ -107,6 +109,10 @@ impl<T: Hash + Eq> TrieMap for FxTrieHashMap<T> {
     fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
+
+    fn keys(&self) -> impl Iterator<Item = &Self::Key> {
+        self.map.keys()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -119,7 +125,10 @@ impl<T: Hash + Eq, M: TrieMap<Key = T>> Trie<T, M> {
         Self { entries: M::new() }
     }
 
-    pub(crate) fn query<'a>(&self, prefix: impl IntoIterator<Item = &'a T>) -> Option<&Self>
+    pub(crate) fn query_by_references<'a>(
+        &self,
+        prefix: impl IntoIterator<Item = &'a T>,
+    ) -> Option<&Self>
     where
         T: 'a,
     {
@@ -127,6 +136,19 @@ impl<T: Hash + Eq, M: TrieMap<Key = T>> Trie<T, M> {
 
         for value in prefix {
             current_trie = current_trie.entries.get(value)?;
+        }
+
+        Some(current_trie)
+    }
+
+    pub(crate) fn query<'a>(&self, prefix: impl IntoIterator<Item = T>) -> Option<&Self>
+    where
+        T: 'a,
+    {
+        let mut current_trie = self;
+
+        for value in prefix {
+            current_trie = current_trie.entries.get(&value)?;
         }
 
         Some(current_trie)

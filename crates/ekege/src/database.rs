@@ -53,12 +53,10 @@ impl Database {
     }
 
     fn insert_map_member(&mut self, map_id: MapId, mut arguments: Vec<TermId>) -> TermId {
-        let term_id = self
-            .term_types
-            .insert_term(self.maps[&map_id].output_type_id);
+        let map = &self.maps[&map_id];
 
         assert_eq!(
-            self.maps[&map_id].argument_type_ids.len(),
+            map.argument_type_ids.len(),
             arguments.len(),
             "invalid argument count for map"
         );
@@ -66,10 +64,20 @@ impl Database {
         assert!(
             arguments
                 .iter()
-                .zip(self.maps[&map_id].argument_type_ids.iter())
+                .zip(map.argument_type_ids.iter())
                 .all(|(argument, type_id)| self.type_id(*argument) == *type_id),
             "mismatching types for map"
         );
+
+        if !arguments.is_empty() {
+            if let Some(term_ids) = map.members.query_by_references(arguments.iter()) {
+                return *term_ids.entries.keys().next().unwrap();
+            }
+        }
+
+        let term_id = self
+            .term_types
+            .insert_term(self.maps[&map_id].output_type_id);
 
         arguments.push(term_id);
         let member = arguments;
@@ -79,17 +87,33 @@ impl Database {
         term_id
     }
 
-    pub fn insert_map_term(&mut self, term: MapTerm) -> TermId {
+    pub fn get_or_insert_map_term(&mut self, term: &MapTerm) -> TermId {
         let arguments = term
             .arguments
-            .into_iter()
+            .iter()
             .map(|argument| match argument {
-                Term::Map(map_term) => self.insert_map_term(map_term),
-                Term::Term(term_id) => term_id,
+                Term::Map(map_term) => self.get_or_insert_map_term(map_term),
+                Term::Term(term_id) => self.canonicalize_immutable(*term_id),
             })
             .collect::<Vec<_>>();
 
-        self.insert_map_member(term.map, arguments)
+        self.insert_map_member(term.map_id, arguments)
+    }
+
+    pub fn term_id(&self, map_term: &MapTerm) -> Option<TermId> {
+        self.maps[&map_term.map_id]
+            .members
+            .query(
+                map_term
+                    .arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        Term::Map(map_term) => self.term_id(map_term),
+                        Term::Term(term_id) => Some(self.canonicalize_immutable(*term_id)),
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            )
+            .and_then(|term_ids| term_ids.entries.keys().next().copied())
     }
 
     pub fn new_constant(&mut self, type_id: TypeId) -> TermId {
@@ -120,39 +144,46 @@ impl Database {
             return self.term_types.canonical_ids.clone();
         }
 
-        let mut pattern_matches = relevant_patterns
-            .map(|(pattern, map)| {
-                let prefix = pattern
-                    .arguments
-                    .iter()
-                    .map_while(|argument| {
-                        if let SimpleMapPatternArgument::Term(term_id) = argument {
-                            Some(self.canonicalize(*term_id))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                let prefix_length = prefix.len();
+        let mut pattern_matches = Vec::new();
 
-                map.query(prefix.iter())
-                    .unwrap()
-                    .items()
-                    .filter_map(|possible_match| {
-                        let [substitution, variable_values @ ..] = &possible_match
-                            [..pattern.last_index(variable).unwrap() + 1 - prefix_length]
-                        else {
-                            unreachable!()
-                        };
+        for (pattern, map) in relevant_patterns {
+            let last_variable_index = pattern.last_index(variable).unwrap();
+            let first_variable_index = pattern.first_index(variable).unwrap();
 
-                        variable_values
-                            .iter()
-                            .all(|variable_value| substitution == variable_value)
-                            .then_some(**substitution)
-                    })
-                    .collect::<HashSet<_>>()
-            })
-            .collect::<Vec<_>>();
+            pattern_matches.push(
+                if let Some(query_result) = map.query(
+                    pattern
+                        .arguments
+                        .iter()
+                        .take(last_variable_index)
+                        .map(|argument| {
+                            if let SimpleMapPatternArgument::Term(term_id) = argument {
+                                self.canonicalize(*term_id)
+                            } else {
+                                unreachable!()
+                            }
+                        }),
+                ) {
+                    query_result
+                        .items()
+                        .filter_map(|possible_match| {
+                            let [substitution, variable_values @ ..] =
+                                &possible_match[..last_variable_index - first_variable_index + 1]
+                            else {
+                                unreachable!()
+                            };
+
+                            variable_values
+                                .iter()
+                                .all(|variable_value| substitution == variable_value)
+                                .then_some(**substitution)
+                        })
+                        .collect::<HashSet<_>>()
+                } else {
+                    return HashSet::new();
+                },
+            );
+        }
 
         let mut smallest_matches = pattern_matches.swap_remove(
             pattern_matches
@@ -215,7 +246,7 @@ impl Database {
         self.search_inner(&mut query, &reordered_maps)
     }
 
-    pub fn run_rule(&mut self, rule: Rule) {
+    pub fn run_rule_once(&mut self, rule: &Rule) {
         let SimpleRule { query, payloads } = SimpleRule::from(rule);
 
         for substitution in self.search(query) {
@@ -240,6 +271,12 @@ impl Database {
         }
     }
 
+    pub fn run_rules_once(&mut self, rules: &[Rule]) {
+        for rule in rules.iter() {
+            self.run_rule_once(rule);
+        }
+    }
+
     fn add_rewrite(&mut self, term_id: TermId, new_term_id: TermId) {
         if term_id != new_term_id {
             self.pending_rewrites.push(PendingRewrite {
@@ -251,6 +288,10 @@ impl Database {
 
     pub fn canonicalize(&mut self, term_id: TermId) -> TermId {
         self.term_types.canonicalize(term_id)
+    }
+
+    fn canonicalize_immutable(&self, term_id: TermId) -> TermId {
+        self.term_types.canonicalize_immutable(term_id)
     }
 
     pub fn unify(&mut self, term_id_a: TermId, term_id_b: TermId) -> TermId {
