@@ -1,29 +1,36 @@
-use std::{collections::HashMap, fmt::Debug, mem};
+use std::{collections::HashMap, fmt::Debug};
 
 use crate::term::TermId;
 
 // Basis for algorithm: https://en.wikipedia.org/wiki/Permutation#Cycle_notation
 // Cycle notation: https://en.wikipedia.org/wiki/Cyclic_permutation
-pub(crate) fn reorder<T>(slice: &mut [T], reordering: &mut [isize]) {
+pub fn reorder<T>(slice: &mut [T], reordering: &mut [isize]) {
     let mut index = 0;
 
     while (index as usize) < reordering.len() {
-        let mut next_index = -index - 1;
+        let mut next_index = reordering[index as usize];
 
-        while !reordering[index as usize].is_negative() {
-            mem::swap(reordering.get_mut(index as usize).unwrap(), &mut next_index);
+        if !next_index.is_negative() {
+            loop {
+                reordering[index as usize] = -reordering[index as usize] - 1;
 
-            slice.swap(index as usize, next_index as usize);
+                if reordering[next_index as usize].is_negative() {
+                    index = next_index;
+                    break;
+                }
 
-            index = next_index;
-            next_index = -next_index - 1;
+                slice.swap(index as usize, next_index as usize);
+
+                index = next_index;
+                next_index = reordering[index as usize];
+            }
         }
 
         index += 1;
     }
 
     for index in reordering {
-        *index = -(*index) + 1;
+        *index = -*index - 1;
     }
 }
 

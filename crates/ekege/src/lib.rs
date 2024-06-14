@@ -7,3 +7,5 @@ pub mod map;
 pub mod rule;
 pub mod term;
 mod trie;
+
+pub use trie::reorder;
