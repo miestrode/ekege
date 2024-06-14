@@ -4,7 +4,7 @@ use crate::term::TermId;
 
 // Basis for algorithm: https://en.wikipedia.org/wiki/Permutation#Cycle_notation
 // Cycle notation: https://en.wikipedia.org/wiki/Cyclic_permutation
-pub fn reorder<T>(slice: &mut [T], reordering: &mut [isize]) {
+pub(crate) fn reorder<T>(slice: &mut [T], reordering: &mut [isize]) {
     let mut index = 0;
 
     while (index as usize) < reordering.len() {
