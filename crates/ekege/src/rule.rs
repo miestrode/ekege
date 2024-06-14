@@ -64,19 +64,18 @@ impl SimpleMapPattern {
         self.variable_indicies(variable).next().is_some()
     }
 
-    pub(crate) fn reorder(&mut self, variable_ordering: &[QueryVariable]) -> Vec<usize> {
-        let reordering = self
+    pub(crate) fn reorder(&mut self, variable_ordering: &[QueryVariable]) -> Vec<isize> {
+        let mut reordering = self
             .constant_indicies()
             .chain(
                 variable_ordering
                     .iter()
                     .flat_map(|&variable| self.variable_indicies(variable)),
             )
+            .map(|index| index as isize)
             .collect::<Vec<_>>();
 
-        for (index_a, index_b) in trie::reordering_as_swaps(&reordering) {
-            self.arguments.swap(index_a, index_b);
-        }
+        trie::reorder(&mut self.arguments, &mut reordering);
 
         reordering
     }

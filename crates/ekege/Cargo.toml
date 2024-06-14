@@ -10,11 +10,6 @@ authors = ["Yoav Grimland <miestrode@proton.me>"]
 [dependencies]
 ekege-macros.workspace = true
 
-bumpalo = { version = "3.16.0", features = ["allocator-api2"] }
-rustc-hash = "1.1.0"
-hashbrown = "0.14.5"
-allocator-api2 = "0.2.18"
-
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 rand = "0.8.5"

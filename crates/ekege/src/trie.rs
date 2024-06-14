@@ -1,137 +1,48 @@
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    hash::{BuildHasherDefault, Hash},
-};
+use std::{collections::HashMap, fmt::Debug, mem};
 
-use bumpalo::Bump;
-use rustc_hash::FxHasher;
+use crate::term::TermId;
 
-pub(crate) fn reordering_as_swaps(reordering: &[usize]) -> Vec<(usize, usize)> {
-    let mut positions = (0..reordering.len()).collect::<Vec<_>>();
-    let mut items = (0..reordering.len()).collect::<Vec<_>>();
+// Basis for algorithm: https://en.wikipedia.org/wiki/Permutation#Cycle_notation
+// Cycle notation: https://en.wikipedia.org/wiki/Cyclic_permutation
+pub(crate) fn reorder<T>(slice: &mut [T], reordering: &mut [isize]) {
+    let mut index = 0;
 
-    reordering
-        .iter()
-        .copied()
-        .enumerate()
-        .filter(|&(index_a, index_b)| reordering[index_b] != index_a || index_a <= index_b)
-        .map(|(index_a, index_b)| {
-            let result = (index_a, positions[index_b]);
+    while (index as usize) < reordering.len() {
+        let mut next_index = -index - 1;
 
-            positions[items[index_a]] = positions[index_b];
-            positions[items[index_b]] = index_a;
+        while !reordering[index as usize].is_negative() {
+            mem::swap(reordering.get_mut(index as usize).unwrap(), &mut next_index);
 
-            items.swap(result.0, result.1);
+            slice.swap(index as usize, next_index as usize);
 
-            result
-        })
-        .filter(|(index_a, index_b)| index_a != index_b)
-        .collect()
-}
-
-type ValueTrie<M> = Trie<<M as TrieMap>::Key, M>;
-
-pub(crate) trait TrieMap: Sized {
-    type Key;
-
-    fn new() -> Self;
-
-    fn get(&self, key: &Self::Key) -> Option<&ValueTrie<Self>>;
-
-    fn get_mut_or_initialize(&mut self, key: Self::Key) -> &mut ValueTrie<Self>;
-
-    fn iter(&self) -> impl Iterator<Item = (&Self::Key, &ValueTrie<Self>)>;
-
-    fn iter_mut(&mut self) -> impl Iterator<Item = (&Self::Key, &mut ValueTrie<Self>)>;
-
-    fn into_iter(self) -> impl Iterator<Item = (Self::Key, ValueTrie<Self>)>;
-
-    fn extend(&mut self, iter: impl IntoIterator<Item = (Self::Key, ValueTrie<Self>)>);
-
-    fn siphon<'a, T>(
-        &mut self,
-        keys: &'a HashMap<Self::Key, T>,
-    ) -> impl Iterator<Item = (&'a T, ValueTrie<Self>)>;
-
-    fn is_empty(&self) -> bool;
-
-    fn keys(&self) -> impl Iterator<Item = &Self::Key>;
-}
-
-#[derive(Debug)]
-pub(crate) struct FxTrieHashMap<T: Hash + Eq> {
-    map: hashbrown::HashMap<T, Trie<T>, BuildHasherDefault<FxHasher>>,
-}
-
-impl<T: Hash + Eq> TrieMap for FxTrieHashMap<T> {
-    type Key = T;
-
-    fn new() -> Self {
-        Self {
-            map: hashbrown::HashMap::default(),
+            index = next_index;
+            next_index = -next_index - 1;
         }
+
+        index += 1;
     }
 
-    fn get(&self, key: &Self::Key) -> Option<&ValueTrie<Self>> {
-        self.map.get(key)
-    }
-
-    fn get_mut_or_initialize(&mut self, key: Self::Key) -> &mut ValueTrie<Self> {
-        self.map.entry(key).or_default()
-    }
-
-    fn iter(&self) -> impl Iterator<Item = (&Self::Key, &ValueTrie<Self>)> {
-        self.map.iter()
-    }
-
-    fn iter_mut(&mut self) -> impl Iterator<Item = (&Self::Key, &mut ValueTrie<Self>)> {
-        self.map.iter_mut()
-    }
-
-    fn into_iter(self) -> impl Iterator<Item = (Self::Key, ValueTrie<Self>)> {
-        self.map.into_iter()
-    }
-
-    fn extend(&mut self, iter: impl IntoIterator<Item = (Self::Key, ValueTrie<Self>)>) {
-        self.map.extend(iter);
-    }
-
-    fn siphon<'a, U>(
-        &mut self,
-        keys: &'a HashMap<Self::Key, U>,
-    ) -> impl Iterator<Item = (&'a U, ValueTrie<Self>)> {
-        self.map
-            .extract_if(|key, _| keys.contains_key(key))
-            .map(|(key, value)| (keys.get(&key).unwrap(), value))
-    }
-
-    fn is_empty(&self) -> bool {
-        self.map.is_empty()
-    }
-
-    fn keys(&self) -> impl Iterator<Item = &Self::Key> {
-        self.map.keys()
+    for index in reordering {
+        *index = -(*index) + 1;
     }
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Trie<T, M: TrieMap<Key = T> = FxTrieHashMap<T>> {
-    pub(crate) entries: M,
+pub(crate) struct TermIdTrie {
+    pub(crate) entries: HashMap<TermId, TermIdTrie>,
 }
 
-impl<T: Hash + Eq, M: TrieMap<Key = T>> Trie<T, M> {
+impl TermIdTrie {
     pub(crate) fn new() -> Self {
-        Self { entries: M::new() }
+        Self {
+            entries: HashMap::new(),
+        }
     }
 
     pub(crate) fn query_by_references<'a>(
         &self,
-        prefix: impl IntoIterator<Item = &'a T>,
-    ) -> Option<&Self>
-    where
-        T: 'a,
-    {
+        prefix: impl IntoIterator<Item = &'a TermId>,
+    ) -> Option<&Self> {
         let mut current_trie = self;
 
         for value in prefix {
@@ -141,10 +52,7 @@ impl<T: Hash + Eq, M: TrieMap<Key = T>> Trie<T, M> {
         Some(current_trie)
     }
 
-    pub(crate) fn query<'a>(&self, prefix: impl IntoIterator<Item = T>) -> Option<&Self>
-    where
-        T: 'a,
-    {
+    pub(crate) fn query(&self, prefix: impl IntoIterator<Item = TermId>) -> Option<&Self> {
         let mut current_trie = self;
 
         for value in prefix {
@@ -154,77 +62,44 @@ impl<T: Hash + Eq, M: TrieMap<Key = T>> Trie<T, M> {
         Some(current_trie)
     }
 
-    pub(crate) fn items(&self) -> impl Iterator<Item = Vec<&T>> {
+    pub(crate) fn items(&self) -> impl Iterator<Item = Vec<TermId>> + '_ {
         self.entries.iter().flat_map(|(key, entry)| {
             let mut result = entry
                 .items()
                 .map(|mut item| {
-                    item.insert(0, key);
+                    item.insert(0, *key);
                     item
                 })
                 .collect::<Vec<_>>();
 
             if result.is_empty() {
-                result.push(vec![key]);
-            }
-
-            result
-        })
-    }
-}
-
-impl<T: Clone + Eq + Hash, M: TrieMap<Key = T>> Trie<T, M> {
-    fn items_in_bump<'a>(
-        &'a self,
-        arena: &'a Bump,
-        depth: usize,
-    ) -> impl Iterator<Item = allocator_api2::vec::Vec<&T, &'a Bump>> {
-        self.entries.iter().flat_map(move |(key, entry)| {
-            let mut result = entry
-                .items_in_bump(arena, depth)
-                .map(|mut item| {
-                    item.insert(0, key);
-                    item
-                })
-                .collect::<Vec<_>>();
-
-            if result.is_empty() {
-                let mut item = allocator_api2::vec::Vec::with_capacity_in(depth, arena);
-                item.push(key);
-
-                result.push(item);
+                result.push(vec![*key]);
             }
 
             result
         })
     }
 
-    pub(crate) fn insert(&mut self, item: impl IntoIterator<Item = T>) {
+    pub(crate) fn insert(&mut self, item: impl IntoIterator<Item = TermId>) {
         let mut current_trie = self;
 
         for value in item {
-            current_trie = current_trie.entries.get_mut_or_initialize(value);
+            current_trie = current_trie
+                .entries
+                .entry(value)
+                .or_insert_with(TermIdTrie::new);
         }
     }
 
-    pub(crate) fn reorder(&self, reordering: &[usize]) -> Self {
-        let mut reordered_trie = Trie::new();
-        let bump = Bump::new();
+    pub(crate) fn reorder(&self, reordering: &mut [isize]) -> Self {
+        let mut reordered_trie = TermIdTrie::new();
 
-        for mut item in self.items_in_bump(&bump, reordering.len()) {
-            for (value_a, value_b) in reordering_as_swaps(reordering) {
-                item.swap(value_a, value_b);
-            }
+        for mut item in self.items() {
+            reorder(&mut item, reordering);
 
-            reordered_trie.insert(item.into_iter().cloned());
+            reordered_trie.insert(item);
         }
 
         reordered_trie
-    }
-}
-
-impl<T: Hash + Eq, M: TrieMap<Key = T>> Default for Trie<T, M> {
-    fn default() -> Self {
-        Self::new()
     }
 }

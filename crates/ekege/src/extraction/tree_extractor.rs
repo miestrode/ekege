@@ -3,7 +3,7 @@ use std::{
     iter,
 };
 
-use crate::{database::Database, map::MapId, term::TermId, trie::Trie};
+use crate::{database::Database, map::MapId, term::TermId, trie::TermIdTrie};
 
 use super::{ExtractedTerm, Extractor};
 
@@ -60,7 +60,7 @@ impl LowestCostTerms {
 }
 
 struct TermIdMapMembers {
-    members: Trie<TermId>,
+    members: TermIdTrie,
     arguments: usize,
 }
 
@@ -98,7 +98,7 @@ impl TreeExtractor {
                                         .then(|| LowestCostTerm {
                                             cost: member
                                                 .iter()
-                                                .map(|&&argument| {
+                                                .map(|&argument| {
                                                     visited.insert(argument);
 
                                                     let cost = self.extract_inner(
@@ -116,7 +116,7 @@ impl TreeExtractor {
                                                 + self.cost(map_id),
                                             term: SimpleExtractedTerm {
                                                 map_id,
-                                                arguments: member.into_iter().copied().collect(),
+                                                arguments: member,
                                             },
                                         })
                                 })
@@ -148,15 +148,15 @@ impl Extractor for TreeExtractor {
             .iter()
             .map(|(map_id, map)| {
                 (map_id, {
-                    let arguments = map.argument_type_ids.len();
+                    let arguments = map.argument_type_ids.len() as isize;
 
                     TermIdMapMembers {
                         members: map.members.reorder(
-                            &iter::once(arguments)
+                            &mut iter::once(arguments)
                                 .chain(0..arguments)
                                 .collect::<Vec<_>>(),
                         ),
-                        arguments,
+                        arguments: arguments as usize,
                     }
                 })
             })

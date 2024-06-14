@@ -7,7 +7,7 @@ use crate::{
         QueryVariable, Rule, SimpleMapPatternArgument, SimpleQuery, SimpleRule, SimpleRulePayload,
     },
     term::{MapTerm, Term, TermId, TermTable},
-    trie::{Trie, TrieMap},
+    trie::TermIdTrie,
 };
 
 pub type TypeId = Id;
@@ -126,7 +126,7 @@ impl Database {
         &mut self,
         query: &SimpleQuery,
         variable: QueryVariable,
-        reordered_maps: &[Trie<TermId>],
+        reordered_maps: &[TermIdTrie],
     ) -> HashSet<TermId> {
         // TODO: Optimize this:
         // - Don't search members whose output would be a class we already rejected
@@ -176,7 +176,7 @@ impl Database {
                             variable_values
                                 .iter()
                                 .all(|variable_value| substitution == variable_value)
-                                .then_some(**substitution)
+                                .then_some(*substitution)
                         })
                         .collect::<HashSet<_>>()
                 } else {
@@ -206,7 +206,7 @@ impl Database {
     fn search_inner(
         &mut self,
         query: &mut SimpleQuery,
-        reordered_maps: &[Trie<TermId>],
+        reordered_maps: &[TermIdTrie],
     ) -> Vec<HashMap<QueryVariable, TermId>> {
         if query.variables.is_empty() {
             vec![HashMap::new()]
@@ -239,7 +239,7 @@ impl Database {
             .map(|pattern| {
                 self.maps[&pattern.map_id]
                     .members
-                    .reorder(&pattern.reorder(&query.variables))
+                    .reorder(&mut pattern.reorder(&query.variables))
             })
             .collect::<Vec<_>>();
 
@@ -313,15 +313,18 @@ impl Database {
     }
 
     fn rebuild_map(
-        map: &mut Trie<TermId>,
+        map: &mut TermIdTrie,
         substitution: &HashMap<TermId, TermId>,
         to_unify: &mut Vec<(TermId, TermId)>,
     ) {
-        for (value, subtrie) in map.entries.siphon(substitution).collect::<Vec<_>>() {
+        for (old_term_id, new_term_id) in substitution.iter() {
+            let entries = map.entries.remove(old_term_id).unwrap().entries;
+
             map.entries
-                .get_mut_or_initialize(*value)
+                .entry(*new_term_id)
+                .or_insert(TermIdTrie::new())
                 .entries
-                .extend(subtrie.entries.into_iter());
+                .extend(entries);
         }
 
         let mut entries = map.entries.iter_mut();
