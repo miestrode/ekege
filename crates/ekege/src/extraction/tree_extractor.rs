@@ -1,7 +1,6 @@
-use std::{
-    collections::{HashMap, HashSet},
-    iter,
-};
+use std::iter;
+
+use hashbrown::{HashMap, HashSet};
 
 use crate::{
     database::Database,

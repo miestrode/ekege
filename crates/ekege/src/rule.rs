@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 pub use ekege_macros::{equivalence, rewrite, rule};
+use hashbrown::HashMap;
 
 use crate::{
     id::Id,

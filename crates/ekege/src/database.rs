@@ -1,10 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use hashbrown::{Equivalent, HashMap, HashSet};
 
 use crate::{
     id::IdGenerator,
     map::{map_signature, Map, MapId, TypeId},
     rule::{FlatMapTermPatternInput, FlatQuery, FlatRule, FlatRulePayload, QueryVariable},
-    term::{TermId, TermIdTrie, TermTable, TreeTerm, TreeTermInput},
+    term::{reorder, TermId, TermIdTrie, TermTable, TreeTerm, TreeTermInput},
 };
 
 #[derive(Debug)]
@@ -13,12 +13,31 @@ pub struct PendingRewrite {
     pub(crate) new_term_id: TermId,
 }
 
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct ReorderedMapTrieCacheKey {
+    map_id: MapId,
+    reordering: Vec<isize>,
+}
+
+impl Equivalent<ReorderedMapTrieCacheKey> for (&MapId, &[isize]) {
+    fn equivalent(&self, key: &ReorderedMapTrieCacheKey) -> bool {
+        self.0 == &key.map_id && self.1 == key.reordering
+    }
+}
+
+fn is_identity_reordering(reordering: &[isize]) -> bool {
+    (0..reordering.len() as isize)
+        .zip(reordering.iter())
+        .any(|(index_a, index_b)| index_a != *index_b)
+}
+
 #[derive(Debug)]
 pub struct Database {
     id_generator: IdGenerator,
     pub(crate) term_type_table: TermTable<TypeId>,
     pub(crate) maps: HashMap<MapId, Map>,
     pending_rewrites: Vec<PendingRewrite>,
+    reordered_map_trie_cache: HashMap<ReorderedMapTrieCacheKey, TermIdTrie>,
 }
 
 impl Database {
@@ -28,6 +47,7 @@ impl Database {
             maps: HashMap::new(),
             term_type_table: TermTable::new(),
             pending_rewrites: Vec::new(),
+            reordered_map_trie_cache: HashMap::new(),
         }
     }
 
@@ -47,25 +67,25 @@ impl Database {
         self.id_generator.generate_id()
     }
 
-    fn insert_map_member(&mut self, map_id: MapId, mut arguments: Vec<TermId>) -> TermId {
+    fn insert_map_member(&mut self, map_id: MapId, inputs: &mut Vec<TermId>) -> TermId {
         let map = &self.maps[&map_id];
 
         assert_eq!(
             map.input_type_ids.len(),
-            arguments.len(),
+            inputs.len(),
             "invalid argument count for map"
         );
 
         assert!(
-            arguments
+            inputs
                 .iter()
                 .zip(map.input_type_ids.iter())
                 .all(|(argument, type_id)| self.type_id(*argument) == *type_id),
             "mismatching types for map"
         );
 
-        if !arguments.is_empty() {
-            if let Some(term_ids) = map.map_terms.query_by_references(arguments.iter()) {
+        if !inputs.is_empty() {
+            if let Some(term_ids) = map.map_terms.query_by_references(inputs.iter()) {
                 return *term_ids.entries.keys().next().unwrap();
             }
         }
@@ -74,16 +94,15 @@ impl Database {
             .term_type_table
             .insert_flat_term(self.maps[&map_id].output_type_id);
 
-        arguments.push(term_id);
-        let member = arguments;
+        inputs.push(term_id);
 
-        self.maps.get_mut(&map_id).unwrap().insert(member);
+        self.maps.get_mut(&map_id).unwrap().insert(inputs);
 
         term_id
     }
 
     pub fn get_or_insert_tree_term(&mut self, term: &TreeTerm) -> TermId {
-        let arguments = term
+        let mut inputs = term
             .inputs
             .iter()
             .map(|argument| match argument {
@@ -92,7 +111,7 @@ impl Database {
             })
             .collect::<Vec<_>>();
 
-        self.insert_map_member(term.map_id, arguments)
+        self.insert_map_member(term.map_id, &mut inputs)
     }
 
     pub fn canonical_term_id(&self, map_term: &TreeTerm) -> Option<TermId> {
@@ -116,24 +135,20 @@ impl Database {
     pub fn new_constant(&mut self, type_id: TypeId) -> TermId {
         let const_map = self.insert_empty_map(map_signature! { () -> type_id });
 
-        self.insert_map_member(const_map, vec![])
+        self.insert_map_member(const_map, &mut vec![])
     }
 
     fn filter(
         &mut self,
-        query: &FlatQuery,
-        variable: QueryVariable,
-        reordered_maps: &[TermIdTrie],
+        flat_query: &FlatQuery,
+        query_variable: QueryVariable,
+        reorderings: &[Vec<isize>],
     ) -> HashSet<TermId> {
-        // TODO: Optimize this:
-        // - Don't search members whose output would be a term we already rejected
-        // - Order the patterns to reject more things using some heuristic
-        // - Use more optimal data structures
-        let mut relevant_patterns = query
+        let mut relevant_patterns = flat_query
             .map_term_patterns
             .iter()
-            .zip(reordered_maps)
-            .filter(|(pattern, _)| pattern.includes(variable))
+            .zip(reorderings.iter())
+            .filter(|(pattern, _)| pattern.includes(query_variable))
             .peekable();
 
         if relevant_patterns.peek().is_none() {
@@ -143,9 +158,17 @@ impl Database {
 
         let mut pattern_matches = Vec::new();
 
-        for (pattern, map) in relevant_patterns {
-            let last_variable_index = pattern.last_index(variable).unwrap();
-            let first_variable_index = pattern.first_index(variable).unwrap();
+        for (pattern, reordering) in relevant_patterns {
+            let map = Self::reordered_map_trie(
+                &mut self.maps,
+                &mut self.reordered_map_trie_cache,
+                pattern.map_id,
+                reordering,
+            )
+            .unwrap();
+
+            let last_variable_index = pattern.last_index(query_variable).unwrap();
+            let first_variable_index = pattern.first_index(query_variable).unwrap();
 
             pattern_matches.push(
                 if let Some(query_result) = map.query(
@@ -155,7 +178,7 @@ impl Database {
                         .take(last_variable_index)
                         .map(|argument| {
                             if let FlatMapTermPatternInput::TermId(term_id) = argument {
-                                self.canonicalize(*term_id)
+                                self.term_type_table.canonicalize(*term_id)
                             } else {
                                 unreachable!()
                             }
@@ -203,7 +226,7 @@ impl Database {
     fn search_inner(
         &mut self,
         flat_query: &mut FlatQuery,
-        reordered_maps: &[TermIdTrie],
+        reorderings: &[Vec<isize>],
     ) -> Vec<HashMap<QueryVariable, TermId>> {
         if flat_query.query_variables.is_empty() {
             vec![HashMap::new()]
@@ -211,18 +234,16 @@ impl Database {
             let variable = flat_query.query_variables[0];
             let mut substitutions = Vec::new();
 
-            for initialization in self.filter(flat_query, variable, reordered_maps) {
+            for initialization in self.filter(flat_query, variable, reorderings) {
                 let unsubstitution = flat_query.substitute_variable(variable, initialization);
 
-                substitutions.extend(
-                    self.search_inner(flat_query, reordered_maps)
-                        .into_iter()
-                        .map(|mut substitution| {
-                            substitution.insert(variable, initialization);
+                substitutions.extend(self.search_inner(flat_query, reorderings).into_iter().map(
+                    |mut substitution| {
+                        substitution.insert(variable, initialization);
 
-                            substitution
-                        }),
-                );
+                        substitution
+                    },
+                ));
 
                 flat_query.unsubstitute_variable(variable, unsubstitution);
             }
@@ -231,31 +252,92 @@ impl Database {
         }
     }
 
-    fn search(&mut self, mut flat_query: FlatQuery) -> Vec<HashMap<QueryVariable, TermId>> {
-        let reordered_maps = flat_query
+    fn reordered_map_trie<'a>(
+        maps: &'a mut HashMap<MapId, Map>,
+        reordered_map_trie_cache: &'a mut HashMap<ReorderedMapTrieCacheKey, TermIdTrie>,
+        map_id: MapId,
+        reordering: &[isize],
+    ) -> Option<&'a mut TermIdTrie> {
+        if !is_identity_reordering(reordering) {
+            reordered_map_trie_cache.get_mut(&(&map_id, reordering))
+        } else {
+            Some(&mut maps.get_mut(&map_id).unwrap().map_terms)
+        }
+    }
+
+    fn cache_reordered_map_trie(&mut self, map_id: MapId, reordering: &mut [isize]) {
+        if Self::reordered_map_trie(
+            &mut self.maps,
+            &mut self.reordered_map_trie_cache,
+            map_id,
+            reordering,
+        )
+        .is_none()
+        {
+            self.reordered_map_trie_cache.insert(
+                ReorderedMapTrieCacheKey {
+                    map_id,
+                    reordering: reordering.to_vec(),
+                },
+                self.maps[&map_id].map_terms.reorder(reordering),
+            );
+        }
+    }
+
+    fn search(
+        &mut self,
+        mut flat_query: FlatQuery,
+    ) -> (Vec<HashMap<QueryVariable, TermId>>, Vec<Vec<isize>>) {
+        let reorderings = flat_query
             .map_term_patterns
             .iter_mut()
-            .map(|pattern| {
-                self.maps[&pattern.map_id]
-                    .map_terms
-                    .reorder(&mut pattern.reorder(&flat_query.query_variables))
+            .map(|map_term_pattern| {
+                let mut reordering = map_term_pattern.reorder(&flat_query.query_variables);
+
+                self.cache_reordered_map_trie(map_term_pattern.map_id, &mut reordering);
+
+                reordering
             })
             .collect::<Vec<_>>();
 
-        self.search_inner(&mut flat_query, &reordered_maps)
+        (
+            self.search_inner(&mut flat_query, &reorderings),
+            reorderings,
+        )
     }
 
     pub fn run_flat_rule_once(&mut self, flat_rule: &FlatRule) {
-        for substitution in self.search(flat_rule.query.clone()) {
+        let (substitutions, mut reorderings) = self.search(flat_rule.query.clone());
+
+        for substitution in substitutions {
             let mut created_terms = Vec::new();
 
             for payload in &flat_rule.payloads {
                 match payload {
                     FlatRulePayload::Creation(term) => {
-                        created_terms.push(self.insert_map_member(
-                            term.map_id,
-                            term.substitute(&substitution, &created_terms),
-                        ));
+                        let mut inputs = term.substitute(&substitution, &created_terms);
+
+                        created_terms.push(self.insert_map_member(term.map_id, &mut inputs));
+
+                        // NOTE: This isn't the most efficient way to do it. If it's ever a
+                        // bottleneck, switch to a two-layered `HashMap`
+                        for (map_term_pattern, reordering) in flat_rule
+                            .query
+                            .map_term_patterns
+                            .iter()
+                            .zip(reorderings.iter_mut())
+                        {
+                            reorder(&mut inputs, reordering);
+
+                            Self::reordered_map_trie(
+                                &mut self.maps,
+                                &mut self.reordered_map_trie_cache,
+                                map_term_pattern.map_id,
+                                reordering,
+                            )
+                            .unwrap()
+                            .insert(inputs.clone())
+                        }
                     }
                     FlatRulePayload::Union(argument_a, argument_b) => {
                         self.unify(
@@ -386,6 +468,8 @@ impl Database {
     }
 
     pub fn rebuild(&mut self) {
+        self.reordered_map_trie_cache = HashMap::new();
+
         while !self.pending_rewrites.is_empty() {
             self.rebuild_all_maps_once();
         }

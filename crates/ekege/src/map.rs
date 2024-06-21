@@ -25,7 +25,7 @@ impl Map {
         }
     }
 
-    pub(crate) fn insert(&mut self, map_term: Vec<TermId>) {
-        self.map_terms.insert(map_term);
+    pub(crate) fn insert(&mut self, map_term: &[TermId]) {
+        self.map_terms.insert(map_term.iter().copied());
     }
 }

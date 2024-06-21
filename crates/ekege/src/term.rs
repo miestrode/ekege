@@ -1,9 +1,7 @@
-use std::{
-    collections::{HashMap, HashSet},
-    ops::{Index, IndexMut},
-};
+use std::ops::{Index, IndexMut};
 
 pub use ekege_macros::tree_term;
+use hashbrown::{HashMap, HashSet};
 
 use crate::{id::Id, map::MapId};
 

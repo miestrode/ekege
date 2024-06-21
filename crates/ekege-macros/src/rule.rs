@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use hashbrown::HashMap;
 use proc_macro2::Span;
 use quote::{quote, ToTokens, TokenStreamExt};
 use syn::{
