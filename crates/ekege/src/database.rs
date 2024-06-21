@@ -458,7 +458,7 @@ impl Database {
     }
 
     pub fn rebuild(&mut self) {
-        self.reordered_map_trie_cache = HashMap::new();
+        self.reordered_map_trie_cache.clear();
 
         while !self.pending_rewrites.is_empty() {
             self.rebuild_all_maps_once();
