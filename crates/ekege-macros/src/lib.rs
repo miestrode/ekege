@@ -6,9 +6,9 @@ use proc_macro2::Span;
 use proc_macro_crate::{crate_name, FoundCrate};
 use quote::ToTokens;
 use rewrite::Rewrite;
-use rule::Rule;
+use rule::{FlatRule, TreeRule};
 use syn::{parse_macro_input, Ident};
-use term::MapTerm;
+use term::TreeTerm;
 
 mod equivalence;
 mod map;
@@ -32,14 +32,14 @@ pub(crate) fn crate_root() -> Ident {
 }
 
 #[proc_macro]
-pub fn map_term(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let input = parse_macro_input!(tokens as MapTerm);
+pub fn tree_term(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = parse_macro_input!(tokens as TreeTerm);
 
     proc_macro::TokenStream::from(input.to_token_stream())
 }
 
 #[proc_macro]
-pub fn map(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
+pub fn map_signature(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(tokens as Map);
 
     proc_macro::TokenStream::from(input.to_token_stream())
@@ -47,9 +47,9 @@ pub fn map(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
 #[proc_macro]
 pub fn rule(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let input = parse_macro_input!(tokens as Rule);
+    let input = parse_macro_input!(tokens as TreeRule);
 
-    proc_macro::TokenStream::from(input.to_token_stream())
+    proc_macro::TokenStream::from(FlatRule::from(&input).to_token_stream())
 }
 
 #[proc_macro]

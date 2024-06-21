@@ -3,7 +3,11 @@ use std::{
     iter,
 };
 
-use crate::{database::Database, map::MapId, term::TermId, trie::TermIdTrie};
+use crate::{
+    database::Database,
+    map::MapId,
+    term::{TermId, TermIdTrie},
+};
 
 use super::{ExtractedTerm, Extractor};
 
@@ -148,10 +152,10 @@ impl Extractor for TreeExtractor {
             .iter()
             .map(|(map_id, map)| {
                 (map_id, {
-                    let arguments = map.argument_type_ids.len() as isize;
+                    let arguments = map.input_type_ids.len() as isize;
 
                     TermIdMapMembers {
-                        members: map.members.reorder(
+                        members: map.map_terms.reorder(
                             &mut iter::once(arguments)
                                 .chain(0..arguments)
                                 .collect::<Vec<_>>(),

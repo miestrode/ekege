@@ -3,9 +3,9 @@ use std::num::NonZeroUsize;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use ekege::{
     database::Database,
-    map::map,
-    rule::{rule, Rule},
-    term::map_term,
+    map::map_signature,
+    rule::{rule, FlatRule},
+    term::tree_term,
 };
 
 use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
@@ -19,14 +19,14 @@ fn generate_random_graph(
     size: NonZeroUsize,
     maximum_cycles: usize,
     rng: &mut impl Rng,
-) -> (Database, [Rule; 2]) {
+) -> (Database, [FlatRule; 2]) {
     let mut database = Database::new();
 
     let node = database.new_type();
     let unit = database.new_type();
 
-    let edge = database.insert_map(map! { (node, node) -> unit });
-    let path = database.insert_map(map! { (node, node) -> unit });
+    let edge = database.insert_empty_map(map_signature! { (node, node) -> unit });
+    let path = database.insert_empty_map(map_signature! { (node, node) -> unit });
 
     let edge_implies_path = rule! { edge('x, 'y) -> path('x, 'y) };
     let two_paths_implies_path = rule! { path('x, 'y), path('y, 'z) -> path('x, 'z) };
@@ -39,8 +39,8 @@ fn generate_random_graph(
         let new_node = database.new_constant(node);
         let other_node = *nodes.choose(rng).unwrap();
 
-        database.get_or_insert_map_term(&map_term! { edge(new_node, other_node) });
-        database.get_or_insert_map_term(&map_term! { edge(other_node, new_node) });
+        database.get_or_insert_tree_term(&tree_term! { edge(new_node, other_node) });
+        database.get_or_insert_tree_term(&tree_term! { edge(other_node, new_node) });
 
         nodes.push(new_node);
     }
@@ -49,16 +49,16 @@ fn generate_random_graph(
         let node_a = *nodes.choose(rng).unwrap();
         let node_b = *nodes.choose(rng).unwrap();
 
-        database.get_or_insert_map_term(&map_term! { edge(node_a, node_b) });
-        database.get_or_insert_map_term(&map_term! { edge(node_b, node_a) });
+        database.get_or_insert_tree_term(&tree_term! { edge(node_a, node_b) });
+        database.get_or_insert_tree_term(&tree_term! { edge(node_b, node_a) });
     }
 
     (database, rules)
 }
 
-fn explore_random_graph(database: &mut Database, rules: &[Rule], runs: usize) {
+fn explore_random_graph(database: &mut Database, rules: &[FlatRule], runs: usize) {
     for _ in 0..runs {
-        database.run_rules_once(rules);
+        database.run_flat_rules_once(rules);
     }
 }
 

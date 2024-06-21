@@ -7,64 +7,66 @@ use syn::{
 
 use crate::crate_root;
 
-enum Term {
-    Map(MapTerm),
-    Term(Ident),
+enum TreeTermInput {
+    TreeTerm(TreeTerm),
+    TermId(Ident),
 }
 
-impl ToTokens for Term {
+impl ToTokens for TreeTermInput {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         let crate_root = crate_root();
 
         tokens.append_all(match self {
-            Term::Map(map) => {
-                quote! { #crate_root::term::Term::Map(#map) }
+            TreeTermInput::TreeTerm(tree_term) => {
+                quote! { #crate_root::term::TreeTermInput::TreeTerm(#tree_term) }
             }
-            Term::Term(term_id) => quote! { #crate_root::term::Term::Term(#term_id) },
+            TreeTermInput::TermId(term_id) => {
+                quote! { #crate_root::term::TreeTermInput::TermId(#term_id) }
+            }
         });
     }
 }
 
-impl Parse for Term {
+impl Parse for TreeTermInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(if input.peek2(token::Paren) {
-            Self::Map(input.parse::<MapTerm>()?)
+            Self::TreeTerm(input.parse::<TreeTerm>()?)
         } else {
-            Self::Term(input.parse::<Ident>()?)
+            Self::TermId(input.parse::<Ident>()?)
         })
     }
 }
 
-pub(crate) struct MapTerm {
+pub(crate) struct TreeTerm {
     map_id: Ident,
-    arguments: Vec<Term>,
+    inputs: Vec<TreeTermInput>,
 }
 
-impl ToTokens for MapTerm {
+impl ToTokens for TreeTerm {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         let crate_root = crate_root();
 
         let map_id = &self.map_id;
-        let arguments = &self.arguments;
+        let inputs = &self.inputs;
 
         tokens.append_all(quote! {
-            #crate_root::term::MapTerm::new(#map_id, vec![#(#arguments),*])
+            #crate_root::term::TreeTerm::new(#map_id, vec![#(#inputs),*])
         });
     }
 }
 
-impl Parse for MapTerm {
+impl Parse for TreeTerm {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let map_id = input.parse::<Ident>()?;
 
         let content;
         parenthesized!(content in input);
 
-        let arguments = content
-            .parse_terminated(Term::parse, Token![,])?
+        let inputs = content
+            .parse_terminated(TreeTermInput::parse, Token![,])?
             .into_iter()
             .collect();
 
-        Ok(Self { map_id, arguments })
+        Ok(Self { map_id, inputs })
     }
 }

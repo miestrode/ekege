@@ -1,26 +1,31 @@
-pub use ekege_macros::map;
+pub use ekege_macros::map_signature;
 
-use crate::{database::TypeId, id::Id, term::TermId, trie::TermIdTrie};
+use crate::{
+    id::Id,
+    term::{TermId, TermIdTrie},
+};
 
-pub type MapId = Id; // Mappings (functions)
+pub type TypeId = Id;
+
+pub type MapId = Id;
 
 #[derive(Debug)]
 pub struct Map {
-    pub(crate) members: TermIdTrie,
-    pub(crate) argument_type_ids: Vec<TypeId>,
+    pub(crate) map_terms: TermIdTrie,
+    pub(crate) input_type_ids: Vec<TypeId>,
     pub(crate) output_type_id: TypeId,
 }
 
 impl Map {
-    pub fn new(argument_type_ids: Vec<TypeId>, output_type_id: TypeId) -> Self {
+    pub fn new(input_type_ids: Vec<TypeId>, output_type_id: TypeId) -> Self {
         Self {
-            members: TermIdTrie::new(),
-            argument_type_ids,
+            map_terms: TermIdTrie::new(),
+            input_type_ids,
             output_type_id,
         }
     }
 
-    pub(crate) fn insert(&mut self, member: Vec<TermId>) {
-        self.members.insert(member);
+    pub(crate) fn insert(&mut self, map_term: Vec<TermId>) {
+        self.map_terms.insert(map_term);
     }
 }

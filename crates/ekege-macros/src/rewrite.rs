@@ -4,28 +4,28 @@ use syn::{
     Token,
 };
 
-use crate::rule::{Rule, RuleTerms};
+use crate::rule::{FlatRule, TreeRule, TreeTermPatternInputs};
 
 pub(crate) struct Rewrite {
-    rule: Rule,
+    tree_rule: TreeRule,
 }
 
 impl ToTokens for Rewrite {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        self.rule.to_tokens(tokens);
+        FlatRule::from(&self.tree_rule).to_tokens(tokens);
     }
 }
 
 impl Parse for Rewrite {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let rule_terms = input.parse::<RuleTerms>()?;
+        let rule_terms = input.parse::<TreeTermPatternInputs>()?;
 
         let _ = input.parse::<Token![->]>()?;
 
-        let rewrites = input.parse::<RuleTerms>()?;
+        let rewrites = input.parse::<TreeTermPatternInputs>()?;
 
         Ok(Self {
-            rule: Rule::new_rewrite(rule_terms, rewrites),
+            tree_rule: TreeRule::new_rewrite(rule_terms, rewrites),
         })
     }
 }

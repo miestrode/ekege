@@ -8,19 +8,19 @@ use syn::{
 use crate::crate_root;
 
 pub(crate) struct Map {
-    input_tys: Vec<Ident>,
-    output_ty: Ident,
+    input_type_ids: Vec<Ident>,
+    output_type_ids: Ident,
 }
 
 impl ToTokens for Map {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         let crate_root = crate_root();
 
-        let input_tys = &self.input_tys;
-        let output_ty = &self.output_ty;
+        let input_type_ids = &self.input_type_ids;
+        let output_type_ids = &self.output_type_ids;
 
         tokens.append_all(quote! {
-            #crate_root::map::Map::new(vec![#(#input_tys),*], #output_ty)
+            #crate_root::map::Map::new(vec![#(#input_type_ids),*], #output_type_ids)
         });
     }
 }
@@ -30,18 +30,18 @@ impl Parse for Map {
         let content;
         parenthesized!(content in input);
 
-        let input_tys = content
+        let input_type_ids = content
             .parse_terminated(Ident::parse, Token![,])?
             .into_iter()
             .collect();
 
         let _ = input.parse::<Token![->]>()?;
 
-        let output_ty = input.parse::<Ident>()?;
+        let output_type_ids = input.parse::<Ident>()?;
 
         Ok(Self {
-            input_tys,
-            output_ty,
+            input_type_ids,
+            output_type_ids,
         })
     }
 }
