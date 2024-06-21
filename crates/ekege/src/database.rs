@@ -284,10 +284,7 @@ impl Database {
         }
     }
 
-    fn search(
-        &mut self,
-        mut flat_query: FlatQuery,
-    ) -> (Vec<HashMap<QueryVariable, TermId>>, Vec<Vec<isize>>) {
+    fn search(&mut self, mut flat_query: FlatQuery) -> Vec<HashMap<QueryVariable, TermId>> {
         let reorderings = flat_query
             .map_term_patterns
             .iter_mut()
@@ -300,16 +297,11 @@ impl Database {
             })
             .collect::<Vec<_>>();
 
-        (
-            self.search_inner(&mut flat_query, &reorderings),
-            reorderings,
-        )
+        self.search_inner(&mut flat_query, &reorderings)
     }
 
     pub fn run_flat_rule_once(&mut self, flat_rule: &FlatRule) {
-        let (substitutions, mut reorderings) = self.search(flat_rule.query.clone());
-
-        for substitution in substitutions {
+        for substitution in self.search(flat_rule.query.clone()) {
             let mut created_terms = Vec::new();
 
             for payload in &flat_rule.payloads {
@@ -321,22 +313,20 @@ impl Database {
 
                         // NOTE: This isn't the most efficient way to do it. If it's ever a
                         // bottleneck, switch to a two-layered `HashMap`
-                        for (map_term_pattern, reordering) in flat_rule
-                            .query
-                            .map_term_patterns
-                            .iter()
-                            .zip(reorderings.iter_mut())
+                        for (cache_key, reordered_map_trie) in
+                            self.reordered_map_trie_cache.iter_mut()
                         {
-                            reorder(&mut inputs, reordering);
+                            if cache_key.map_id == term.map_id {
+                                // SAFETY: In single-threaded environments, reorder is unobservable
+                                reorder(&mut inputs, unsafe {
+                                    (cache_key.reordering.as_slice() as *const [isize])
+                                        .cast_mut()
+                                        .as_mut()
+                                        .unwrap()
+                                });
 
-                            Self::reordered_map_trie(
-                                &mut self.maps,
-                                &mut self.reordered_map_trie_cache,
-                                map_term_pattern.map_id,
-                                reordering,
-                            )
-                            .unwrap()
-                            .insert(inputs.clone())
+                                reordered_map_trie.insert(inputs.iter().copied());
+                            }
                         }
                     }
                     FlatRulePayload::Union(argument_a, argument_b) => {
