@@ -1,3 +1,8 @@
+use pprof::{
+    criterion::{Output, PProfProfiler},
+    flamegraph,
+};
+
 use std::num::NonZeroUsize;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
@@ -78,5 +83,17 @@ fn random_graph_benchmark(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, random_graph_benchmark);
+fn config() -> Criterion {
+    let mut options = flamegraph::Options::default();
+
+    options.image_width = Some(4000);
+
+    Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(Some(options))))
+}
+
+criterion_group! {
+    name = benches;
+    config = config();
+    targets = random_graph_benchmark
+}
 criterion_main!(benches);
