@@ -25,12 +25,6 @@ impl Equivalent<ReorderedMapTrieCacheKey> for (&MapId, &[isize]) {
     }
 }
 
-fn is_identity_reordering(reordering: &[isize]) -> bool {
-    (0..reordering.len() as isize)
-        .zip(reordering.iter())
-        .any(|(index_a, index_b)| index_a != *index_b)
-}
-
 #[derive(Debug)]
 pub struct Database {
     id_generator: IdGenerator,
@@ -258,7 +252,10 @@ impl Database {
         map_id: MapId,
         reordering: &[isize],
     ) -> Option<&'a mut TermIdTrie> {
-        if !is_identity_reordering(reordering) {
+        if !(0..reordering.len() as isize)
+            .zip(reordering.iter())
+            .all(|(correct_index, reordering_index)| correct_index == *reordering_index)
+        {
             reordered_map_trie_cache.get_mut(&(&map_id, reordering))
         } else {
             Some(&mut maps.get_mut(&map_id).unwrap().map_terms)
