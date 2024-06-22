@@ -91,6 +91,25 @@ impl Database {
 
         inputs.push(term_id);
 
+        // NOTE: This isn't the most efficient way to do it. If it's ever a
+        // bottleneck, switch to a two-layered `HashMap`
+        for (cache_key, reordered_map_trie) in self.reordered_map_trie_cache.iter_mut() {
+            if cache_key.map_id == map_id {
+                // NOTE: If we're cloning, no need to reorder in place. This is a bit inefficient
+                let mut inputs = inputs.clone();
+
+                // SAFETY: In single-threaded environments, reorder is unobservable
+                reorder(&mut inputs, unsafe {
+                    (cache_key.reordering.as_slice() as *const [isize])
+                        .cast_mut()
+                        .as_mut()
+                        .unwrap()
+                });
+
+                reordered_map_trie.insert(inputs);
+            }
+        }
+
         self.maps.get_mut(&map_id).unwrap().insert(inputs);
 
         term_id
@@ -319,24 +338,6 @@ impl Database {
                             let mut inputs = term.substitute(&substitution, &created_terms);
 
                             created_terms.push(self.insert_map_member(term.map_id, &mut inputs));
-
-                            // NOTE: This isn't the most efficient way to do it. If it's ever a
-                            // bottleneck, switch to a two-layered `HashMap`
-                            for (cache_key, reordered_map_trie) in
-                                self.reordered_map_trie_cache.iter_mut()
-                            {
-                                if cache_key.map_id == term.map_id {
-                                    // SAFETY: In single-threaded environments, reorder is unobservable
-                                    reorder(&mut inputs, unsafe {
-                                        (cache_key.reordering.as_slice() as *const [isize])
-                                            .cast_mut()
-                                            .as_mut()
-                                            .unwrap()
-                                    });
-
-                                    reordered_map_trie.insert(inputs.iter().copied());
-                                }
-                            }
                         }
                         FlatRulePayload::Union(argument_a, argument_b) => {
                             self.unify(
@@ -458,10 +459,16 @@ impl Database {
     }
 
     pub(crate) fn rebuild(&mut self) {
-        self.reordered_map_trie_cache.clear();
+        if !self.pending_rewrites.is_empty() {
+            self.reordered_map_trie_cache.clear();
 
-        while !self.pending_rewrites.is_empty() {
-            self.rebuild_all_maps_once();
+            loop {
+                self.rebuild_all_maps_once();
+
+                if self.pending_rewrites.is_empty() {
+                    break;
+                }
+            }
         }
     }
 

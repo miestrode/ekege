@@ -7,6 +7,7 @@ ekege = { path = "./crates/ekege/" }
 ekege-macros = { path = "./crates/ekege-macros" }
 
 hashbrown = "0.14.5"
+rayon = "1.10.0"
 
 proc-macro2 = "1.0.86"
 quote = "1.0.36"
