@@ -6,12 +6,7 @@ use pprof::{
 use std::num::NonZeroUsize;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use ekege::{
-    database::Database,
-    map::map_signature,
-    rule::{rule, FlatRule},
-    term::tree_term,
-};
+use ekege::{database::Database, domain::Domain, map::map_signature, rule::rule, term::tree_term};
 
 use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
 
@@ -20,11 +15,7 @@ const MAXIMUM_CYCLES: usize = 10;
 const SEED: u64 = 42;
 const RUNS: usize = 3;
 
-fn generate_random_graph(
-    size: NonZeroUsize,
-    maximum_cycles: usize,
-    rng: &mut impl Rng,
-) -> (Database, [FlatRule; 2]) {
+fn generate_random_graph(size: NonZeroUsize, maximum_cycles: usize, rng: &mut impl Rng) -> Domain {
     let mut database = Database::new();
 
     let node = database.new_type();
@@ -58,12 +49,12 @@ fn generate_random_graph(
         database.get_or_insert_tree_term(&tree_term! { edge(node_b, node_a) });
     }
 
-    (database, rules)
+    Domain::new(database, rules)
 }
 
-fn explore_random_graph(database: &mut Database, rules: &[FlatRule], runs: usize) {
+fn explore_random_graph(domain: &mut Domain, runs: usize) {
     for _ in 0..runs {
-        database.run_flat_rules_once(rules);
+        domain.run_flat_rules_once();
     }
 }
 
@@ -77,7 +68,7 @@ fn random_graph_benchmark(c: &mut Criterion) {
                     &mut StdRng::seed_from_u64(SEED),
                 )
             },
-            |(database, rules)| explore_random_graph(database, rules, RUNS),
+            |domain| explore_random_graph(domain, RUNS),
             BatchSize::SmallInput,
         )
     });

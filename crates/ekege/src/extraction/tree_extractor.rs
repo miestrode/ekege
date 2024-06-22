@@ -154,7 +154,7 @@ impl Extractor for TreeExtractor {
                     let arguments = map.input_type_ids.len() as isize;
 
                     TermIdMapMembers {
-                        members: map.map_terms.reorder(
+                        members: map.old_map_terms.reorder(
                             &mut iter::once(arguments)
                                 .chain(0..arguments)
                                 .collect::<Vec<_>>(),
