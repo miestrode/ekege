@@ -6,9 +6,11 @@ resolver = "2"
 ekege = { path = "./crates/ekege/" }
 ekege-macros = { path = "./crates/ekege-macros" }
 
-hashbrown = "0.14.5"
+hashbrown = { version = "0.14.5", features = ["rayon"] }
 bumpalo = "3.16.0"
 mimalloc = "0.1.42"
+rayon = "1.10.0"
+dashmap = "5.5.3"
 
 proc-macro2 = "1.0.86"
 quote = "1.0.36"

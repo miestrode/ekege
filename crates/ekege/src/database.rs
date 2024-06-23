@@ -1,4 +1,6 @@
-use hashbrown::{Equivalent, HashMap, HashSet};
+use dashmap::{mapref::one::Ref, DashMap};
+use hashbrown::{HashMap, HashSet};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{
     id::IdGenerator,
@@ -20,10 +22,9 @@ struct ReorderedMapTrieCacheKey {
     reordering: Vec<isize>,
 }
 
-impl Equivalent<ReorderedMapTrieCacheKey> for (MapId, bool, &mut [isize]) {
-    fn equivalent(&self, key: &ReorderedMapTrieCacheKey) -> bool {
-        self.0 == key.map_id && self.1 == key.required_new && self.2 == key.reordering
-    }
+enum CacheResult<'a> {
+    MapView(&'a TermIdTrie),
+    CacheView(Ref<'a, ReorderedMapTrieCacheKey, TermIdTrie>),
 }
 
 #[derive(Debug)]
@@ -32,7 +33,7 @@ pub struct Database {
     pub(crate) term_type_table: TermTable<TypeId>,
     pub(crate) maps: HashMap<MapId, Map>,
     pending_rewrites: Vec<PendingRewrite>,
-    reordered_map_trie_cache: HashMap<ReorderedMapTrieCacheKey, TermIdTrie>,
+    reordered_map_trie_cache: DashMap<ReorderedMapTrieCacheKey, TermIdTrie>,
 }
 
 impl Database {
@@ -42,7 +43,7 @@ impl Database {
             maps: HashMap::new(),
             term_type_table: TermTable::new(),
             pending_rewrites: Vec::new(),
-            reordered_map_trie_cache: HashMap::new(),
+            reordered_map_trie_cache: DashMap::new(),
         }
     }
 
@@ -93,9 +94,11 @@ impl Database {
 
         // NOTE: This isn't the most efficient way to do it. If it's ever a
         // bottleneck, switch to a two-layered `HashMap`
-        for (cache_key, reordered_map_trie) in self.reordered_map_trie_cache.iter_mut() {
-            if cache_key.map_id == map_id {
-                reordered_map_trie.insert(project_reordering(&inputs, &cache_key.reordering));
+        for mut reference in self.reordered_map_trie_cache.iter_mut() {
+            if reference.key().map_id == map_id {
+                let item = project_reordering(&inputs, &reference.key().reordering);
+
+                reference.value_mut().insert(item);
             }
         }
 
@@ -144,45 +147,41 @@ impl Database {
     }
 
     fn cache_reordered_map_trie<'a>(
-        maps: &'a mut HashMap<MapId, Map>,
-        reordered_map_trie_cache: &'a mut HashMap<ReorderedMapTrieCacheKey, TermIdTrie>,
+        maps: &'a HashMap<MapId, Map>,
+        reordered_map_trie_cache: &'a DashMap<ReorderedMapTrieCacheKey, TermIdTrie>,
         map_id: MapId,
         required_new: bool,
         reordering: &mut [isize],
-    ) -> &'a mut TermIdTrie {
+    ) -> CacheResult<'a> {
+        let map = &maps[&map_id];
+
+        let relevant_map_trie = if required_new {
+            &map.new_map_terms
+        } else {
+            &map.old_map_terms
+        };
+
         if (0..reordering.len() as isize)
             .zip(reordering.iter())
             .all(|(correct_index, reordering_index)| correct_index == *reordering_index)
         {
-            let map = maps.get_mut(&map_id).unwrap();
-
-            if required_new {
-                &mut map.new_map_terms
-            } else {
-                &mut map.old_map_terms
-            }
+            CacheResult::MapView(relevant_map_trie)
         } else {
-            reordered_map_trie_cache
-                .entry(ReorderedMapTrieCacheKey {
-                    map_id,
-                    required_new,
-                    reordering: reordering.to_vec(),
-                })
-                .or_insert_with(|| {
-                    let map = &maps[&map_id];
-
-                    if required_new {
-                        &map.new_map_terms
-                    } else {
-                        &map.old_map_terms
-                    }
-                    .reorder(reordering)
-                })
+            CacheResult::CacheView(
+                reordered_map_trie_cache
+                    .entry(ReorderedMapTrieCacheKey {
+                        map_id,
+                        required_new,
+                        reordering: reordering.to_vec(),
+                    })
+                    .or_insert_with(|| relevant_map_trie.reorder(reordering))
+                    .downgrade(),
+            )
         }
     }
 
     fn filter(
-        &mut self,
+        &self,
         flat_query: &FlatQuery,
         query_variable: QueryVariable,
         reorderings: &mut [Vec<isize>],
@@ -205,8 +204,8 @@ impl Database {
 
         for (pattern_index, (pattern, reordering)) in relevant_patterns {
             let map = Self::cache_reordered_map_trie(
-                &mut self.maps,
-                &mut self.reordered_map_trie_cache,
+                &self.maps,
+                &self.reordered_map_trie_cache,
                 pattern.map_id,
                 new_required_map_index == pattern_index,
                 reordering,
@@ -215,20 +214,23 @@ impl Database {
             let last_variable_index = pattern.last_index(query_variable).unwrap();
             let first_variable_index = pattern.first_index(query_variable).unwrap();
 
+            let query = pattern
+                .inputs
+                .iter()
+                .take(last_variable_index)
+                .map(|argument| {
+                    if let FlatMapTermPatternInput::TermId(term_id) = argument {
+                        self.term_type_table.canonicalize_immutable(*term_id)
+                    } else {
+                        unreachable!()
+                    }
+                });
+
             pattern_matches.push(
-                if let Some(query_result) = map.query(
-                    pattern
-                        .inputs
-                        .iter()
-                        .take(last_variable_index)
-                        .map(|argument| {
-                            if let FlatMapTermPatternInput::TermId(term_id) = argument {
-                                self.term_type_table.canonicalize(*term_id)
-                            } else {
-                                unreachable!()
-                            }
-                        }),
-                ) {
+                if let Some(query_result) = match &map {
+                    CacheResult::MapView(map_trie) => map_trie.query(query),
+                    CacheResult::CacheView(map_trie) => map_trie.query(query),
+                } {
                     query_result
                         .items()
                         .filter_map(|possible_match| {
@@ -269,7 +271,7 @@ impl Database {
     }
 
     fn search_inner(
-        &mut self,
+        &self,
         flat_query: &mut FlatQuery,
         reorderings: &mut [Vec<isize>],
         new_required_map_index: usize,
@@ -278,40 +280,50 @@ impl Database {
             vec![HashMap::new()]
         } else {
             let variable = flat_query.query_variables[0];
-            let mut substitutions = Vec::new();
 
-            for initialization in
-                self.filter(flat_query, variable, reorderings, new_required_map_index)
-            {
-                let unsubstitution = flat_query.substitute_variable(variable, initialization);
+            self.filter(
+                flat_query,
+                variable,
+                &mut reorderings.to_vec(),
+                new_required_map_index,
+            )
+            .into_par_iter()
+            .flat_map(|initialization| {
+                let flat_query = &mut flat_query.clone();
+                flat_query.substitute_variable(variable, initialization);
 
-                substitutions.extend(
-                    self.search_inner(flat_query, reorderings, new_required_map_index)
-                        .into_iter()
-                        .map(|mut substitution| {
-                            substitution.insert(variable, initialization);
+                self.search_inner(
+                    flat_query,
+                    &mut reorderings.to_vec(),
+                    new_required_map_index,
+                )
+                .into_iter()
+                .map(move |mut substitution| {
+                    substitution.insert(variable, initialization);
 
-                            substitution
-                        }),
-                );
-
-                flat_query.unsubstitute_variable(variable, unsubstitution);
-            }
-
-            substitutions
+                    substitution
+                })
+                .collect::<Vec<_>>()
+            })
+            .collect()
         }
     }
 
-    fn search(&mut self, mut flat_query: FlatQuery) -> Vec<HashMap<QueryVariable, TermId>> {
-        let mut reorderings = flat_query
+    fn search(&self, mut flat_query: FlatQuery) -> Vec<HashMap<QueryVariable, TermId>> {
+        let reorderings = flat_query
             .map_term_patterns
             .iter_mut()
             .map(|map_term_pattern| map_term_pattern.reorder(&flat_query.query_variables))
             .collect::<Vec<_>>();
 
         (0..flat_query.map_term_patterns.len())
+            .into_par_iter()
             .flat_map(|new_required_map_index| {
-                self.search_inner(&mut flat_query, &mut reorderings, new_required_map_index)
+                self.search_inner(
+                    &mut flat_query.clone(),
+                    &mut reorderings.clone(),
+                    new_required_map_index,
+                )
             })
             .collect()
     }

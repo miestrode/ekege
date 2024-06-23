@@ -11,7 +11,9 @@ authors = ["Yoav Grimland <miestrode@proton.me>"]
 ekege-macros.workspace = true
 
 hashbrown.workspace = true
-mimalloc.workspace = true
+tikv-jemallocator.workspace = true
+dashmap.workspace = true
+rayon.workspace = true
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
