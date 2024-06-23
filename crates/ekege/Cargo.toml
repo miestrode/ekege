@@ -8,8 +8,10 @@ authors = ["Yoav Grimland <miestrode@proton.me>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-hashbrown.workspace = true
 ekege-macros.workspace = true
+
+hashbrown.workspace = true
+mimalloc.workspace = true
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }

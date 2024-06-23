@@ -7,3 +7,8 @@ pub mod id;
 pub mod map;
 pub mod rule;
 pub mod term;
+
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;

@@ -317,10 +317,10 @@ impl Database {
 
         self.clear_new_map_terms();
 
+        let mut created_terms = Vec::new();
+
         for (rule, substitutions) in flat_rules.iter().zip(rule_substitutions) {
             for substitution in substitutions {
-                let mut created_terms = Vec::new();
-
                 for payload in &rule.payloads {
                     match payload {
                         FlatRulePayload::Creation(term) => {
@@ -336,6 +336,8 @@ impl Database {
                         }
                     }
                 }
+
+                created_terms.clear();
             }
         }
     }
