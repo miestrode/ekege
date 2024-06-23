@@ -150,13 +150,17 @@ impl Database {
         required_new: bool,
         reordering: &mut [isize],
     ) -> &'a mut TermIdTrie {
-        if !(0..reordering.len() as isize)
+        if (0..reordering.len() as isize)
             .zip(reordering.iter())
             .all(|(correct_index, reordering_index)| correct_index == *reordering_index)
         {
-            reordered_map_trie_cache
-                .get_mut(&(map_id, required_new, reordering))
-                .unwrap()
+            let map = maps.get_mut(&map_id).unwrap();
+
+            if required_new {
+                &mut map.new_map_terms
+            } else {
+                &mut map.old_map_terms
+            }
         } else {
             reordered_map_trie_cache
                 .entry(ReorderedMapTrieCacheKey {
@@ -164,7 +168,16 @@ impl Database {
                     required_new,
                     reordering: reordering.to_vec(),
                 })
-                .or_insert_with(|| maps[&map_id].old_map_terms.reorder(reordering))
+                .or_insert_with(|| {
+                    let map = &maps[&map_id];
+
+                    if required_new {
+                        &map.new_map_terms
+                    } else {
+                        &map.old_map_terms
+                    }
+                    .reorder(reordering)
+                })
         }
     }
 
