@@ -127,6 +127,13 @@ impl<T> Default for TermTable<T> {
     }
 }
 
+pub(crate) fn project_reordering<T: Clone>(slice: &[T], reordering: &[isize]) -> Vec<T> {
+    reordering
+        .iter()
+        .map(|&index| slice[index as usize].clone())
+        .collect()
+}
+
 // Basis for algorithm: https://en.wikipedia.org/wiki/Permutation#Cycle_notation
 // Cycle notation: https://en.wikipedia.org/wiki/Cyclic_permutation
 pub(crate) fn reorder<T>(slice: &mut [T], reordering: &mut [isize]) {

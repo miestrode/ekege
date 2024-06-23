@@ -4,7 +4,7 @@ use crate::{
     id::IdGenerator,
     map::{map_signature, Map, MapId, TypeId},
     rule::{FlatMapTermPatternInput, FlatQuery, FlatRule, FlatRulePayload, QueryVariable},
-    term::{reorder, TermId, TermIdTrie, TermTable, TreeTerm, TreeTermInput},
+    term::{project_reordering, TermId, TermIdTrie, TermTable, TreeTerm, TreeTermInput},
 };
 
 #[derive(Debug)]
@@ -62,7 +62,7 @@ impl Database {
         self.id_generator.generate_id()
     }
 
-    fn insert_map_member(&mut self, map_id: MapId, inputs: &mut Vec<TermId>) -> TermId {
+    fn insert_map_member(&mut self, map_id: MapId, mut inputs: Vec<TermId>) -> TermId {
         let map = &self.maps[&map_id];
 
         assert_eq!(
@@ -95,28 +95,17 @@ impl Database {
         // bottleneck, switch to a two-layered `HashMap`
         for (cache_key, reordered_map_trie) in self.reordered_map_trie_cache.iter_mut() {
             if cache_key.map_id == map_id {
-                // NOTE: If we're cloning, no need to reorder in place. This is a bit inefficient
-                let mut inputs = inputs.clone();
-
-                // SAFETY: In single-threaded environments, reorder is unobservable
-                reorder(&mut inputs, unsafe {
-                    (cache_key.reordering.as_slice() as *const [isize])
-                        .cast_mut()
-                        .as_mut()
-                        .unwrap()
-                });
-
-                reordered_map_trie.insert(inputs);
+                reordered_map_trie.insert(project_reordering(&inputs, &cache_key.reordering));
             }
         }
 
-        self.maps.get_mut(&map_id).unwrap().insert(inputs);
+        self.maps.get_mut(&map_id).unwrap().insert(&inputs);
 
         term_id
     }
 
     pub fn get_or_insert_tree_term(&mut self, term: &TreeTerm) -> TermId {
-        let mut inputs = term
+        let inputs = term
             .inputs
             .iter()
             .map(|argument| match argument {
@@ -127,7 +116,7 @@ impl Database {
             })
             .collect::<Vec<_>>();
 
-        self.insert_map_member(term.map_id, &mut inputs)
+        self.insert_map_member(term.map_id, inputs)
     }
 
     pub fn canonical_term_id(&self, map_term: &TreeTerm) -> Option<TermId> {
@@ -151,7 +140,7 @@ impl Database {
     pub fn new_constant(&mut self, type_id: TypeId) -> TermId {
         let const_map = self.insert_empty_map(map_signature! { () -> type_id });
 
-        self.insert_map_member(const_map, &mut vec![])
+        self.insert_map_member(const_map, vec![])
     }
 
     fn cache_reordered_map_trie<'a>(
@@ -335,9 +324,9 @@ impl Database {
                 for payload in &rule.payloads {
                     match payload {
                         FlatRulePayload::Creation(term) => {
-                            let mut inputs = term.substitute(&substitution, &created_terms);
+                            let inputs = term.substitute(&substitution, &created_terms);
 
-                            created_terms.push(self.insert_map_member(term.map_id, &mut inputs));
+                            created_terms.push(self.insert_map_member(term.map_id, inputs));
                         }
                         FlatRulePayload::Union(argument_a, argument_b) => {
                             self.unify(
