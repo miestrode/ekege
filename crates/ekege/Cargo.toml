@@ -2,7 +2,7 @@
 name = "ekege"
 version = "0.1.0"
 edition = "2021"
-description = "It's an e-graph library!"
+description = "An alternative egglog engine"
 authors = ["Yoav Grimland <miestrode@proton.me>"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -13,7 +13,6 @@ ekege-macros.workspace = true
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
-pprof = { version = "0.13.0", features = ["flamegraph", "criterion"] }
 rand = "0.8.5"
 
 [[bench]]

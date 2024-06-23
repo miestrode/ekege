@@ -451,6 +451,7 @@ impl Database {
 
         for map in self.maps.values_mut() {
             Self::rebuild_map(&mut map.old_map_terms, &substitution, &mut to_unify);
+            Self::rebuild_map(&mut map.new_map_terms, &substitution, &mut to_unify);
         }
 
         for (term_id_a, term_id_b) in to_unify {
