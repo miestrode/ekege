@@ -1,5 +1,4 @@
 pub use ekege_macros::{equivalence, rewrite, rule};
-use hashbrown::HashMap;
 
 use crate::{
     id::Id,
@@ -75,51 +74,22 @@ impl FlatMapTermPattern {
 #[derive(Debug, Clone)]
 pub struct FlatQuery {
     pub map_term_patterns: Vec<FlatMapTermPattern>,
-    pub query_variables: Vec<QueryVariable>,
+    pub variables: usize,
 }
 
 impl FlatQuery {
-    pub(crate) fn substitute_variable(
-        &mut self,
-        query_variable: QueryVariable,
-        term_id: TermId,
-    ) -> (Vec<(usize, usize)>, usize) {
-        let mut indicies = Vec::new();
+    pub(crate) fn substitute_variable(&mut self, query_variable: QueryVariable, term_id: TermId) {
+        self.variables -= 1;
 
-        let order_index = self
-            .query_variables
-            .iter()
-            .position(|&other_variable| other_variable == query_variable)
-            .unwrap();
-        self.query_variables.remove(order_index);
-
-        for (pattern_index, pattern) in self.map_term_patterns.iter_mut().enumerate() {
+        for pattern in &mut self.map_term_patterns {
             for input_index in pattern
                 .query_variable_indices(query_variable)
                 .collect::<Vec<_>>()
                 .into_iter()
             {
-                indicies.push((pattern_index, input_index));
-
                 pattern.inputs[input_index] = FlatMapTermPatternInput::TermId(term_id);
             }
         }
-
-        (indicies, order_index)
-    }
-
-    pub(crate) fn unsubstitute_variable(
-        &mut self,
-        query_variable: QueryVariable,
-        unsubstitution: (Vec<(usize, usize)>, usize),
-    ) {
-        for (pattern_index, input_index) in unsubstitution.0 {
-            self.map_term_patterns[pattern_index].inputs[input_index] =
-                FlatMapTermPatternInput::QueryVariable(query_variable);
-        }
-
-        self.query_variables
-            .insert(unsubstitution.1, query_variable);
     }
 }
 
@@ -133,11 +103,14 @@ pub enum FlatTermPatternInput {
 impl FlatTermPatternInput {
     pub(crate) fn substitute(
         &self,
-        substitution: &HashMap<QueryVariable, TermId>,
+        variable_indices: &[usize],
+        substitution: &[TermId],
         created_terms: &[TermId],
     ) -> TermId {
         match self {
-            FlatTermPatternInput::QueryVariable(variable) => *substitution.get(variable).unwrap(),
+            FlatTermPatternInput::QueryVariable(variable) => {
+                substitution[variable_indices[*variable]]
+            }
             FlatTermPatternInput::TermId(term_id) => *term_id,
             FlatTermPatternInput::PreviouslyCreatedFlatTermIndex(index) => created_terms[*index],
         }
@@ -153,12 +126,13 @@ pub struct FlatTermPattern {
 impl FlatTermPattern {
     pub(crate) fn substitute(
         &self,
-        substitution: &HashMap<QueryVariable, TermId>,
+        variable_indices: &[usize],
+        substitution: &[TermId],
         created_terms: &[TermId],
     ) -> Vec<TermId> {
         self.inputs
             .iter()
-            .map(|input| input.substitute(substitution, created_terms))
+            .map(|input| input.substitute(variable_indices, substitution, created_terms))
             .collect()
     }
 }

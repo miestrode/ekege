@@ -11,6 +11,7 @@ bumpalo = "3.16.0"
 mimalloc = "0.1.42"
 rayon = "1.10.0"
 dashmap = "5.5.3"
+rustc-hash = "2.0.0"
 
 proc-macro2 = "1.0.86"
 quote = "1.0.36"

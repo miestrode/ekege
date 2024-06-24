@@ -11,9 +11,10 @@ authors = ["Yoav Grimland <miestrode@proton.me>"]
 ekege-macros.workspace = true
 
 hashbrown.workspace = true
-tikv-jemallocator.workspace = true
+mimalloc.workspace = true
 dashmap.workspace = true
 rayon.workspace = true
+rustc-hash.workspace = true
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }

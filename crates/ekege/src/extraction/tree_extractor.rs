@@ -4,6 +4,7 @@ use hashbrown::{HashMap, HashSet};
 
 use crate::{
     database::Database,
+    id::Id,
     map::MapId,
     term::{TermId, TermIdTrie},
 };
@@ -72,14 +73,16 @@ impl TreeExtractor {
         &self,
         lowest_cost_terms: &mut LowestCostTerms,
         visited: &mut HashSet<TermId>,
-        maps: &HashMap<&MapId, TermIdMapMembers>,
+        maps: &[(MapId, TermIdMapMembers)],
         term_id: TermId,
     ) -> u32 {
         visited.insert(term_id);
 
         let lowest_cost_term = maps
             .iter()
-            .filter_map(|(&&map_id, map)| {
+            .filter_map(|(map_id, map)| {
+                let map_id = *map_id;
+
                 map.members
                     .query_by_references([&term_id])
                     .map(|term_id_members| {
@@ -149,8 +152,9 @@ impl Extractor for TreeExtractor {
         let maps = database
             .maps
             .iter()
+            .enumerate()
             .map(|(map_id, map)| {
-                (map_id, {
+                (Id(map_id), {
                     let arguments = map.input_type_ids.len() as isize;
 
                     TermIdMapMembers {
@@ -163,7 +167,8 @@ impl Extractor for TreeExtractor {
                     }
                 })
             })
-            .collect::<HashMap<_, _>>();
+            .collect::<Vec<_>>();
+
         let mut lowest_cost_terms = LowestCostTerms::new();
 
         self.extract_inner(&mut lowest_cost_terms, &mut HashSet::new(), &maps, term_id);
