@@ -2,7 +2,6 @@ use std::ops::{Index, IndexMut};
 
 pub use ekege_macros::tree_term;
 use hashbrown::{HashMap, HashSet};
-use rustc_hash::FxBuildHasher;
 
 use crate::{id::Id, map::MapId};
 
@@ -169,13 +168,13 @@ pub(crate) fn reorder<T>(slice: &mut [T], reordering: &mut [isize]) {
 
 #[derive(Clone, Debug)]
 pub(crate) struct TermIdTrie {
-    pub(crate) entries: HashMap<TermId, TermIdTrie, FxBuildHasher>,
+    pub(crate) entries: HashMap<TermId, TermIdTrie>,
 }
 
 impl TermIdTrie {
     pub(crate) fn new() -> Self {
         Self {
-            entries: HashMap::with_hasher(FxBuildHasher),
+            entries: HashMap::new(),
         }
     }
 

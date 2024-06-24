@@ -25,14 +25,14 @@ impl ToTokens for Id {
 type QueryVariable = Id;
 
 struct QueryVariableTable {
-    variables: usize,
+    query_variables: usize,
     name_to_query_variable_table: HashMap<String, QueryVariable>,
 }
 
 impl QueryVariableTable {
     fn new() -> Self {
         Self {
-            variables: 0,
+            query_variables: 0,
             name_to_query_variable_table: HashMap::new(),
         }
     }
@@ -43,7 +43,7 @@ impl QueryVariableTable {
         *self
             .name_to_query_variable_table
             .entry(query_variable)
-            .or_insert_with(|| Self::create_nameless_query_variable(&mut self.variables))
+            .or_insert_with(|| Self::create_nameless_query_variable(&mut self.query_variables))
     }
 
     fn create_nameless_query_variable(query_variables: &mut usize) -> QueryVariable {
@@ -153,7 +153,7 @@ impl TreeTermPattern {
                 })
                 .collect::<Vec<_>>();
 
-        let root_flat_map_term_pattern_query_variable = QueryVariableTable::create_nameless_query_variable(&mut query_variable_table.variables);
+        let root_flat_map_term_pattern_query_variable = QueryVariableTable::create_nameless_query_variable(&mut query_variable_table.query_variables);
 
         inputs.push(FlatMapTermPatternInput::QueryVariable(root_flat_map_term_pattern_query_variable));
 
@@ -401,7 +401,7 @@ impl ToTokens for FlatMapTermPattern {
 
 struct FlatQuery {
     map_term_patterns: Vec<FlatMapTermPattern>,
-    variables: usize,
+    query_variables: usize,
 }
 
 impl ToTokens for FlatQuery {
@@ -409,12 +409,12 @@ impl ToTokens for FlatQuery {
         let crate_root = crate_root();
 
         let flat_map_term_patterns = &self.map_term_patterns;
-        let variables = self.variables;
+        let query_variables = (0..self.query_variables).map(Id);
 
         tokens.append_all(quote! {
             #crate_root::rule::FlatQuery {
                 map_term_patterns: vec![#(#flat_map_term_patterns),*],
-                variables: #variables,
+                query_variables: vec![#(#query_variables),*],
             }
         });
     }
@@ -509,7 +509,7 @@ impl From<&TreeRule> for FlatRule {
         Self {
             query: FlatQuery {
                 map_term_patterns,
-                variables: query_variable_table.variables,
+                query_variables: query_variable_table.query_variables,
             },
             payloads: flat_rule_payloads,
         }
