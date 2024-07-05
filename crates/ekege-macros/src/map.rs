@@ -7,25 +7,28 @@ use syn::{
 
 use crate::crate_root;
 
-pub(crate) struct Map {
+pub(crate) struct MapSignature {
     input_type_ids: Vec<Ident>,
-    output_type_ids: Ident,
+    output_type_id: Ident,
 }
 
-impl ToTokens for Map {
+impl ToTokens for MapSignature {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         let crate_root = crate_root();
 
         let input_type_ids = &self.input_type_ids;
-        let output_type_ids = &self.output_type_ids;
+        let output_type_id = &self.output_type_id;
 
         tokens.append_all(quote! {
-            #crate_root::map::Map::new(vec![#(#input_type_ids),*], #output_type_ids)
+            #crate_root::map::MapSignature {
+                input_type_ids: vec![#(#input_type_ids),*],
+                output_type_id: #output_type_id
+            }
         });
     }
 }
 
-impl Parse for Map {
+impl Parse for MapSignature {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let content;
         parenthesized!(content in input);
@@ -37,11 +40,11 @@ impl Parse for Map {
 
         let _ = input.parse::<Token![->]>()?;
 
-        let output_type_ids = input.parse::<Ident>()?;
+        let output_type_id = input.parse::<Ident>()?;
 
         Ok(Self {
             input_type_ids,
-            output_type_ids,
+            output_type_id,
         })
     }
 }

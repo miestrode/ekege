@@ -1,7 +1,7 @@
 use std::env;
 
 use equivalence::Equivalence;
-use map::Map;
+use map::MapSignature;
 use proc_macro2::Span;
 use proc_macro_crate::{crate_name, FoundCrate};
 use quote::ToTokens;
@@ -40,7 +40,7 @@ pub fn tree_term(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
 #[proc_macro]
 pub fn map_signature(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let input = parse_macro_input!(tokens as Map);
+    let input = parse_macro_input!(tokens as MapSignature);
 
     proc_macro::TokenStream::from(input.to_token_stream())
 }

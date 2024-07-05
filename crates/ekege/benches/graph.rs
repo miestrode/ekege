@@ -8,7 +8,7 @@ use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
 const GRAPH_SIZE: usize = 100;
 const MAXIMUM_CYCLES: usize = 10;
 const SEED: u64 = 42;
-const RUNS: usize = 3;
+const TIMES: usize = 3;
 
 fn generate_random_graph(size: NonZeroUsize, maximum_cycles: usize, rng: &mut impl Rng) -> Domain {
     let mut database = Database::new();
@@ -16,8 +16,8 @@ fn generate_random_graph(size: NonZeroUsize, maximum_cycles: usize, rng: &mut im
     let node = database.new_type();
     let unit = database.new_type();
 
-    let edge = database.insert_empty_map(map_signature! { (node, node) -> unit });
-    let path = database.insert_empty_map(map_signature! { (node, node) -> unit });
+    let edge = database.new_map(map_signature! { (node, node) -> unit });
+    let path = database.new_map(map_signature! { (node, node) -> unit });
 
     let edge_implies_path = rule! { edge('x, 'y) -> path('x, 'y) };
     let two_paths_implies_path = rule! { path('x, 'y), path('y, 'z) -> path('x, 'z) };
@@ -30,8 +30,8 @@ fn generate_random_graph(size: NonZeroUsize, maximum_cycles: usize, rng: &mut im
         let new_node = database.new_constant(node);
         let other_node = *nodes.choose(rng).unwrap();
 
-        database.get_or_insert_tree_term(&tree_term! { edge(new_node, other_node) });
-        database.get_or_insert_tree_term(&tree_term! { edge(other_node, new_node) });
+        database.new_tree_term(&tree_term! { edge(new_node, other_node) });
+        database.new_tree_term(&tree_term! { edge(other_node, new_node) });
 
         nodes.push(new_node);
     }
@@ -40,17 +40,15 @@ fn generate_random_graph(size: NonZeroUsize, maximum_cycles: usize, rng: &mut im
         let node_a = *nodes.choose(rng).unwrap();
         let node_b = *nodes.choose(rng).unwrap();
 
-        database.get_or_insert_tree_term(&tree_term! { edge(node_a, node_b) });
-        database.get_or_insert_tree_term(&tree_term! { edge(node_b, node_a) });
+        database.new_tree_term(&tree_term! { edge(node_a, node_b) });
+        database.new_tree_term(&tree_term! { edge(node_b, node_a) });
     }
 
     Domain::new(database, rules)
 }
 
-fn explore_random_graph(domain: &mut Domain, runs: usize) {
-    for _ in 0..runs {
-        domain.run_flat_rules_once();
-    }
+fn explore_random_graph(domain: &mut Domain, times: usize) {
+    domain.run_rules(times);
 }
 
 fn random_graph_benchmark(c: &mut Criterion) {
@@ -63,7 +61,7 @@ fn random_graph_benchmark(c: &mut Criterion) {
                     &mut StdRng::seed_from_u64(SEED),
                 )
             },
-            |domain| explore_random_graph(domain, RUNS),
+            |domain| explore_random_graph(domain, TIMES),
             BatchSize::SmallInput,
         )
     });

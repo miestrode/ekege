@@ -1,363 +1,262 @@
-use dashmap::{mapref::one::Ref, DashMap};
-use hashbrown::{HashMap, HashSet};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use std::{collections::BTreeMap, ops::Index};
+
+use ekege_macros::map_signature;
 
 use crate::{
-    id::IdGenerator,
-    map::{map_signature, Map, MapId, TypeId},
-    rule::{FlatMapTermPatternInput, FlatQuery, FlatRule, FlatRulePayload, QueryVariable},
-    term::{project_reordering, TermId, TermIdTrie, TermTable, TreeTerm, TreeTermInput},
+    colt::{Colt, TermTuple},
+    id::{Id, IdGenerator},
+    map::{Map, MapId, MapSignature, TypeId},
+    plan::{ColtId, ExecutableQueryPlan, QueryPlanSection, SubMapTerm},
+    rule::{ExecutableFlatRule, FlatRulePayload, QueryVariable},
+    term::{TermId, TermTable, TreeTerm, TreeTermInput},
 };
 
-#[derive(Debug)]
-pub struct PendingRewrite {
-    pub(crate) term_id: TermId,
-    pub(crate) new_term_id: TermId,
+enum SearchColts<'a> {
+    OwnedReferences(BTreeMap<ColtId, &'a Colt<'a>>),
+    ReferencedOwneds(&'a BTreeMap<ColtId, Colt<'a>>),
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
-struct ReorderedMapTrieCacheKey {
-    map_id: MapId,
-    required_new: bool,
-    reordering: Vec<isize>,
+impl<'a> SearchColts<'a> {
+    fn to_owned_references(&self) -> BTreeMap<ColtId, &'a Colt<'a>> {
+        match self {
+            Self::OwnedReferences(colts) => colts.clone(),
+            Self::ReferencedOwneds(colts) => colts.iter().map(|(&id, colt)| (id, colt)).collect(),
+        }
+    }
 }
 
-enum CacheResult<'a> {
-    MapView(&'a TermIdTrie),
-    CacheView(Ref<'a, ReorderedMapTrieCacheKey, TermIdTrie>),
+impl<'a> Index<ColtId> for SearchColts<'a> {
+    type Output = Colt<'a>;
+
+    fn index(&self, index: ColtId) -> &Self::Output {
+        match self {
+            SearchColts::OwnedReferences(colts) => colts[&index],
+            SearchColts::ReferencedOwneds(colts) => &colts[&index],
+        }
+    }
 }
 
-#[derive(Debug)]
 pub struct Database {
-    id_generator: IdGenerator,
-    pub(crate) term_type_table: TermTable<TypeId>,
-    pub(crate) maps: HashMap<MapId, Map>,
-    pending_rewrites: Vec<PendingRewrite>,
-    reordered_map_trie_cache: DashMap<ReorderedMapTrieCacheKey, TermIdTrie>,
+    maps: Vec<Map>,
+    term_type_table: TermTable<TypeId>,
+    type_id_generator: IdGenerator,
 }
 
 impl Database {
     pub fn new() -> Self {
         Self {
-            id_generator: IdGenerator::new(),
-            maps: HashMap::new(),
+            maps: Vec::new(),
             term_type_table: TermTable::new(),
-            pending_rewrites: Vec::new(),
-            reordered_map_trie_cache: DashMap::new(),
+            type_id_generator: IdGenerator::new(),
         }
     }
 
-    pub fn insert_empty_map(&mut self, map: Map) -> MapId {
-        let id = self.id_generator.generate_id();
+    pub fn new_map(&mut self, signature: MapSignature) -> MapId {
+        let id = Id(self.maps.len());
 
-        self.maps.insert(id, map);
+        self.maps.push(Map::new(signature));
 
         id
+    }
+
+    pub fn new_type(&mut self) -> TypeId {
+        self.type_id_generator.generate_id()
     }
 
     pub fn type_id(&self, term_id: TermId) -> TypeId {
         *self.term_type_table.get(term_id)
     }
 
-    pub fn new_type(&mut self) -> TypeId {
-        self.id_generator.generate_id()
-    }
-
-    fn insert_map_member(&mut self, map_id: MapId, mut inputs: Vec<TermId>) -> TermId {
-        let map = &self.maps[&map_id];
+    fn insert_map_member(&mut self, map_id: MapId, term_tuple: TermTuple) -> TermId {
+        let map = &self.maps[map_id.0];
 
         assert_eq!(
-            map.input_type_ids.len(),
-            inputs.len(),
+            map.signature.input_type_ids.len(),
+            term_tuple.term_ids.len(),
             "invalid argument count for map"
         );
 
         assert!(
-            inputs
+            term_tuple
+                .term_ids
                 .iter()
-                .zip(map.input_type_ids.iter())
+                .zip(map.signature.input_type_ids.iter())
                 .all(|(argument, type_id)| self.type_id(*argument) == *type_id),
             "mismatching types for map"
         );
 
-        if !inputs.is_empty() {
-            if let Some(term_ids) = map.old_map_terms.query_by_references(inputs.iter()) {
-                return *term_ids.entries.keys().next().unwrap();
-            }
-        }
+        let type_id = map.signature.output_type_id;
 
-        let term_id = self
-            .term_type_table
-            .insert_flat_term(self.maps[&map_id].output_type_id);
-
-        inputs.push(term_id);
-
-        // NOTE: This isn't the most efficient way to do it. If it's ever a
-        // bottleneck, switch to a two-layered `HashMap`
-        for mut reference in self.reordered_map_trie_cache.iter_mut() {
-            if reference.key().map_id == map_id {
-                let item = project_reordering(&inputs, &reference.key().reordering);
-
-                reference.value_mut().insert(item);
-            }
-        }
-
-        self.maps.get_mut(&map_id).unwrap().insert(&inputs);
-
-        term_id
+        *self.maps[map_id.0]
+            .map_terms
+            .entry(term_tuple)
+            .or_insert_with(|| self.term_type_table.insert_flat_term(type_id))
     }
 
-    pub fn get_or_insert_tree_term(&mut self, term: &TreeTerm) -> TermId {
-        let inputs = term
-            .inputs
-            .iter()
-            .map(|argument| match argument {
-                TreeTermInput::MapTerm(map_term) => self.get_or_insert_tree_term(map_term),
-                TreeTermInput::TermId(term_id) => {
-                    self.term_type_table.canonicalize_immutable(*term_id)
-                }
-            })
-            .collect::<Vec<_>>();
+    pub fn new_tree_term(&mut self, term: &TreeTerm) -> TermId {
+        let term_tuple = TermTuple {
+            term_ids: term
+                .inputs
+                .iter()
+                .map(|input| match input {
+                    TreeTermInput::TreeTerm(term) => self.new_tree_term(term),
+                    TreeTermInput::TermId(term_id) => {
+                        self.term_type_table.canonicalize_immutable(*term_id)
+                    }
+                })
+                .collect(),
+        };
 
-        self.insert_map_member(term.map_id, inputs)
+        self.insert_map_member(term.map_id, term_tuple)
     }
 
-    pub fn canonical_term_id(&self, map_term: &TreeTerm) -> Option<TermId> {
-        self.maps[&map_term.map_id]
-            .old_map_terms
-            .query(
-                map_term
+    fn map_member_term_id(&self, map_id: MapId, map_member: TermTuple) -> Option<TermId> {
+        self.maps[map_id.0].map_terms.get(&map_member).copied()
+    }
+
+    pub fn term_id(&self, term: &TreeTerm) -> Option<TermId> {
+        self.map_member_term_id(
+            term.map_id,
+            TermTuple {
+                term_ids: term
                     .inputs
                     .iter()
-                    .map(|argument| match argument {
-                        TreeTermInput::MapTerm(map_term) => self.canonical_term_id(map_term),
-                        TreeTermInput::TermId(term_id) => {
-                            Some(self.term_type_table.canonicalize_immutable(*term_id))
-                        }
+                    .map(|input| match input {
+                        TreeTermInput::TreeTerm(term) => self.term_id(term),
+                        TreeTermInput::TermId(term_id) => Some(*term_id),
                     })
                     .collect::<Option<Vec<_>>>()?,
-            )
-            .and_then(|term_ids| term_ids.entries.keys().next().copied())
+            },
+        )
     }
 
     pub fn new_constant(&mut self, type_id: TypeId) -> TermId {
-        let const_map = self.insert_empty_map(map_signature! { () -> type_id });
+        let const_map = self.new_map(map_signature! { () -> type_id });
 
-        self.insert_map_member(const_map, vec![])
-    }
-
-    fn cache_reordered_map_trie<'a>(
-        maps: &'a HashMap<MapId, Map>,
-        reordered_map_trie_cache: &'a DashMap<ReorderedMapTrieCacheKey, TermIdTrie>,
-        map_id: MapId,
-        required_new: bool,
-        reordering: &mut [isize],
-    ) -> CacheResult<'a> {
-        let map = &maps[&map_id];
-
-        let relevant_map_trie = if required_new {
-            &map.new_map_terms
-        } else {
-            &map.old_map_terms
-        };
-
-        if (0..reordering.len() as isize)
-            .zip(reordering.iter())
-            .all(|(correct_index, reordering_index)| correct_index == *reordering_index)
-        {
-            CacheResult::MapView(relevant_map_trie)
-        } else {
-            CacheResult::CacheView(
-                reordered_map_trie_cache
-                    .entry(ReorderedMapTrieCacheKey {
-                        map_id,
-                        required_new,
-                        reordering: reordering.to_vec(),
-                    })
-                    .or_insert_with(|| relevant_map_trie.reorder(reordering))
-                    .downgrade(),
-            )
-        }
-    }
-
-    fn filter(
-        &self,
-        flat_query: &FlatQuery,
-        query_variable: QueryVariable,
-        reorderings: &mut [Vec<isize>],
-        new_required_map_index: usize,
-    ) -> HashSet<TermId> {
-        let mut relevant_patterns = flat_query
-            .map_term_patterns
-            .iter()
-            .zip(reorderings.iter_mut())
-            .enumerate()
-            .filter(|(_, (pattern, _))| pattern.includes(query_variable))
-            .peekable();
-
-        if relevant_patterns.peek().is_none() {
-            // Variable is free
-            return self.term_type_table.canonical_ids.clone();
-        }
-
-        let mut pattern_matches = Vec::new();
-
-        for (pattern_index, (pattern, reordering)) in relevant_patterns {
-            let map = Self::cache_reordered_map_trie(
-                &self.maps,
-                &self.reordered_map_trie_cache,
-                pattern.map_id,
-                new_required_map_index == pattern_index,
-                reordering,
-            );
-
-            let last_variable_index = pattern.last_index(query_variable).unwrap();
-            let first_variable_index = pattern.first_index(query_variable).unwrap();
-
-            let query = pattern
-                .inputs
-                .iter()
-                .take(last_variable_index)
-                .map(|argument| {
-                    if let FlatMapTermPatternInput::TermId(term_id) = argument {
-                        self.term_type_table.canonicalize_immutable(*term_id)
-                    } else {
-                        unreachable!()
-                    }
-                });
-
-            pattern_matches.push(
-                if let Some(query_result) = match &map {
-                    CacheResult::MapView(map_trie) => map_trie.query(query),
-                    CacheResult::CacheView(map_trie) => map_trie.query(query),
-                } {
-                    query_result
-                        .items()
-                        .filter_map(|possible_match| {
-                            let [substitution, variable_values @ ..] =
-                                &possible_match[..last_variable_index - first_variable_index + 1]
-                            else {
-                                unreachable!()
-                            };
-
-                            variable_values
-                                .iter()
-                                .all(|variable_value| substitution == variable_value)
-                                .then_some(*substitution)
-                        })
-                        .collect::<HashSet<_>>()
-                } else {
-                    return HashSet::new();
-                },
-            );
-        }
-
-        let mut smallest_matches = pattern_matches.swap_remove(
-            pattern_matches
-                .iter()
-                .enumerate()
-                .min_by_key(|(_, matches)| matches.len())
-                .unwrap()
-                .0,
-        );
-
-        smallest_matches.retain(|possible_match| {
-            pattern_matches
-                .iter()
-                .all(|matches| matches.contains(possible_match))
-        });
-
-        smallest_matches
+        self.insert_map_member(
+            const_map,
+            TermTuple {
+                term_ids: Vec::new(),
+            },
+        )
     }
 
     fn search_inner(
-        &self,
-        flat_query: &mut FlatQuery,
-        reorderings: &mut [Vec<isize>],
-        new_required_map_index: usize,
-    ) -> Vec<HashMap<QueryVariable, TermId>> {
-        if flat_query.query_variables.is_empty() {
-            vec![HashMap::new()]
+        colts: SearchColts<'_>,
+        query_plan_sections: &[QueryPlanSection],
+        current_substitution: &mut BTreeMap<QueryVariable, TermId>,
+        substitutions: &mut Vec<BTreeMap<QueryVariable, TermId>>,
+    ) {
+        if query_plan_sections.is_empty() {
+            substitutions.push(current_substitution.clone())
         } else {
-            let variable = flat_query.query_variables[0];
+            let cover = &colts[query_plan_sections[0].sub_map_terms[0].colt_id];
 
-            self.filter(
-                flat_query,
-                variable,
-                &mut reorderings.to_vec(),
-                new_required_map_index,
-            )
-            .into_par_iter()
-            .flat_map(|initialization| {
-                let flat_query = &mut flat_query.clone();
-                flat_query.substitute_variable(variable, initialization);
+            // SAFETY: As shown below, `cover` won't be changed while it is being iterated, making `get` and `iter` safe
+            for tuple in unsafe { cover.iter() } {
+                current_substitution.extend(
+                    cover
+                        .tuple_indices()
+                        .keys()
+                        .copied()
+                        .zip(tuple.term_ids.iter().copied()),
+                );
 
-                self.search_inner(
-                    flat_query,
-                    &mut reorderings.to_vec(),
-                    new_required_map_index,
-                )
-                .into_iter()
-                .map(move |mut substitution| {
-                    substitution.insert(variable, initialization);
+                'tuple_attempt: {
+                    let mut new_colts = colts.to_owned_references();
 
-                    substitution
-                })
-                .collect::<Vec<_>>()
-            })
-            .collect()
+                    for &SubMapTerm { colt_id, .. } in &query_plan_sections[0].sub_map_terms
+                        [if query_plan_sections.len() == 1 { 1 } else { 0 }..]
+                    {
+                        let colt = &new_colts[&colt_id];
+                        let subtuple = TermTuple {
+                            term_ids: colt
+                                .tuple_indices()
+                                .keys()
+                                .map(|variable| current_substitution[variable])
+                                .collect(),
+                        };
+
+                        // SAFETY: When this is the final section of the plan, we ignore the first COLT
+                        // explicitly, as `new_colts` won't be used. Otherwise, this isn't the last section,
+                        // and thus forcing must've already happened in `iter()`, and this internal `force()`
+                        // is a no-op
+                        if let Some(subtrie) = unsafe { colt.get(&subtuple) } {
+                            new_colts.insert(colt_id, subtrie);
+                        } else {
+                            break 'tuple_attempt;
+                        }
+                    }
+
+                    if query_plan_sections.len() == 1 {
+                        substitutions.push(current_substitution.clone());
+                    } else {
+                        Self::search_inner(
+                            SearchColts::OwnedReferences(new_colts),
+                            &query_plan_sections[1..],
+                            current_substitution,
+                            substitutions,
+                        );
+                    }
+                }
+
+                for variable in cover.tuple_indices().keys() {
+                    current_substitution.remove(variable);
+                }
+            }
         }
     }
 
-    fn search(&self, mut flat_query: FlatQuery) -> Vec<HashMap<QueryVariable, TermId>> {
-        let reorderings = flat_query
-            .map_term_patterns
-            .iter_mut()
-            .map(|map_term_pattern| map_term_pattern.reorder(&flat_query.query_variables))
-            .collect::<Vec<_>>();
-
-        (0..flat_query.map_term_patterns.len())
-            .into_par_iter()
-            .flat_map(|new_required_map_index| {
-                self.search_inner(
-                    &mut flat_query.clone(),
-                    &mut reorderings.clone(),
-                    new_required_map_index,
-                )
-            })
-            .collect()
-    }
-
-    fn clear_new_map_terms(&mut self) {
-        for map in self.maps.values_mut() {
-            map.clear_new_map_terms();
-        }
-    }
-
-    pub(crate) fn run_flat_rules_once(&mut self, flat_rules: &[FlatRule]) {
-        let rule_substitutions = flat_rules
+    fn search(
+        &self,
+        executable_query_plan: &ExecutableQueryPlan,
+    ) -> Vec<BTreeMap<QueryVariable, TermId>> {
+        let colts = executable_query_plan
+            .colt_schematics
             .iter()
-            .map(|rule| self.search(rule.query.clone()))
-            .collect::<Vec<_>>();
+            .map(|(&colt_id, schematic)| {
+                (
+                    colt_id,
+                    Colt::new(&self.maps[schematic.map_id.0], &schematic.tuple_schematics),
+                )
+            })
+            .collect();
 
-        self.clear_new_map_terms();
+        let mut substitutions = Vec::new();
+
+        Self::search_inner(
+            SearchColts::ReferencedOwneds(&colts),
+            &executable_query_plan.query_plan.sections,
+            &mut BTreeMap::new(),
+            &mut substitutions,
+        );
+
+        substitutions
+    }
+
+    pub(crate) fn run_rules_once(&mut self, rules: &[ExecutableFlatRule]) {
+        let rule_substitutions = rules
+            .iter()
+            .map(|rule| self.search(&rule.query_plan))
+            .collect::<Vec<_>>();
 
         let mut created_terms = Vec::new();
 
-        for (rule, substitutions) in flat_rules.iter().zip(rule_substitutions) {
+        for (rule, substitutions) in rules.iter().zip(rule_substitutions) {
             for substitution in substitutions {
-                for payload in &rule.payloads {
+                for payload in rule.payloads {
                     match payload {
                         FlatRulePayload::Creation(term) => {
                             let inputs = term.substitute(&substitution, &created_terms);
 
                             created_terms.push(self.insert_map_member(term.map_id, inputs));
                         }
-                        FlatRulePayload::Union(argument_a, argument_b) => {
-                            self.unify(
-                                argument_a.substitute(&substitution, &created_terms),
-                                argument_b.substitute(&substitution, &created_terms),
-                            );
+                        FlatRulePayload::Union(_argument_a, _argument_b) => {
+                            todo!("unification")
+                            // self.unify(
+                            //     argument_a.substitute(&substitution, &created_terms),
+                            //     argument_b.substitute(&substitution, &created_terms),
+                            // );
                         }
                     }
                 }
@@ -365,132 +264,6 @@ impl Database {
                 created_terms.clear();
             }
         }
-    }
-
-    fn add_rewrite(&mut self, term_id: TermId, new_term_id: TermId) {
-        if term_id != new_term_id {
-            self.pending_rewrites.push(PendingRewrite {
-                term_id,
-                new_term_id,
-            });
-        }
-    }
-
-    pub fn canonicalize(&mut self, term_id: TermId) -> TermId {
-        self.term_type_table.canonicalize(term_id)
-    }
-
-    pub fn unify(&mut self, term_id_a: TermId, term_id_b: TermId) -> TermId {
-        let canonical_term_id_a = self.canonicalize(term_id_a);
-        let canonical_term_id_b = self.canonicalize(term_id_b);
-
-        if canonical_term_id_a == canonical_term_id_b {
-            return canonical_term_id_a;
-        }
-
-        let new_term_id = self
-            .term_type_table
-            .unify(canonical_term_id_a, canonical_term_id_b);
-
-        self.add_rewrite(canonical_term_id_a, new_term_id);
-        self.add_rewrite(canonical_term_id_b, new_term_id);
-
-        new_term_id
-    }
-
-    fn rebuild_map(
-        map: &mut TermIdTrie,
-        substitution: &HashMap<TermId, TermId>,
-        to_unify: &mut Vec<(TermId, TermId)>,
-    ) {
-        for (old_term_id, new_term_id) in substitution.iter() {
-            let entries = map.entries.remove(old_term_id).unwrap().entries;
-
-            map.entries
-                .entry(*new_term_id)
-                .or_insert(TermIdTrie::new())
-                .entries
-                .extend(entries);
-        }
-
-        let mut entries = map.entries.iter_mut();
-
-        if let Some((first_value, entry)) = entries.next() {
-            if entry.entries.is_empty() {
-                // This means the term ids at this stage are for whole map members
-                for (value, _) in entries {
-                    to_unify.push((*first_value, *value));
-                }
-            } else {
-                Self::rebuild_map(entry, substitution, to_unify);
-
-                for (_, entry) in entries {
-                    Self::rebuild_map(entry, substitution, to_unify);
-                }
-            }
-        }
-    }
-
-    fn rebuild_all_maps_once(&mut self) {
-        let original_substitution = self
-            .pending_rewrites
-            .iter()
-            .map(
-                |&PendingRewrite {
-                     term_id,
-                     new_term_id,
-                 }| (term_id, new_term_id),
-            )
-            .collect::<HashMap<_, _>>();
-
-        let substitution = self
-            .pending_rewrites
-            .drain(..)
-            .map(
-                |PendingRewrite {
-                     term_id,
-                     mut new_term_id,
-                 }| {
-                    // Due to the union-find used for generating the pending rewrites, cycles are
-                    // impossible
-                    while let Some(substituted_new_term_id) =
-                        original_substitution.get(&new_term_id)
-                    {
-                        new_term_id = *substituted_new_term_id;
-                    }
-                    (term_id, new_term_id)
-                },
-            )
-            .collect();
-
-        let mut to_unify = Vec::new();
-
-        for map in self.maps.values_mut() {
-            Self::rebuild_map(&mut map.old_map_terms, &substitution, &mut to_unify);
-            Self::rebuild_map(&mut map.new_map_terms, &substitution, &mut to_unify);
-        }
-
-        for (term_id_a, term_id_b) in to_unify {
-            self.unify(term_id_a, term_id_b);
-        }
-    }
-
-    pub(crate) fn rebuild(&mut self) {
-        if !self.pending_rewrites.is_empty() {
-            self.reordered_map_trie_cache.clear();
-
-            loop {
-                self.rebuild_all_maps_once();
-
-                if self.pending_rewrites.is_empty() {
-                    break;
-                }
-            }
-        }
-    }
-
-    pub fn equal(&mut self, term_id_a: TermId, term_id_b: TermId) -> bool {
-        self.canonicalize(term_id_a) == self.canonicalize(term_id_b)
     }
 }
 

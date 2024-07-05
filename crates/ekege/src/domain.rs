@@ -2,19 +2,28 @@ use crate::{database::Database, rule::FlatRule};
 
 pub struct Domain {
     pub database: Database,
-    flat_rules: Vec<FlatRule>,
+    rules: Vec<FlatRule>,
 }
 
 impl Domain {
-    pub fn new(database: Database, flat_rules: impl IntoIterator<Item = FlatRule>) -> Self {
+    pub fn new(database: Database, rules: impl IntoIterator<Item = FlatRule>) -> Self {
         Self {
             database,
-            flat_rules: flat_rules.into_iter().collect(),
+            rules: rules.into_iter().collect(),
         }
     }
 
-    pub fn run_flat_rules_once(&mut self) {
-        self.database.run_flat_rules_once(&self.flat_rules);
-        self.database.rebuild();
+    pub fn run_rules(&mut self, times: usize) {
+        let executable_rules = self
+            .rules
+            .iter()
+            .map(FlatRule::to_executable)
+            .collect::<Vec<_>>();
+
+        for _ in 0..times {
+            self.database.run_rules_once(&executable_rules);
+            // self.database.rebuild();
+            // TODO: Rebuilding
+        }
     }
 }

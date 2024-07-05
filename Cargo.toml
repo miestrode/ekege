@@ -6,17 +6,19 @@ resolver = "2"
 ekege = { path = "./crates/ekege/" }
 ekege-macros = { path = "./crates/ekege-macros" }
 
-hashbrown = { version = "0.14.5", features = ["rayon"] }
-bumpalo = "3.16.0"
-mimalloc = "0.1.42"
-rayon = "1.10.0"
-dashmap = "5.5.3"
+mimalloc = "0.1.43"
+indexmap = "2.2.6"
+either = "1.13.0"
 
 proc-macro2 = "1.0.86"
 quote = "1.0.36"
-syn = "2.0.67"
+syn = "2.0.68"
 proc-macro-crate = "3.1.0"
 
 [profile.release]
 lto = true
 codegen-units = 1
+
+[profile.tests]
+inherits = "dev"
+optlevel = 3     # Needed for some integration
