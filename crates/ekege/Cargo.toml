@@ -11,7 +11,6 @@ authors = ["Yoav Grimland <miestrode@proton.me>"]
 ekege-macros.workspace = true
 
 indexmap.workspace = true
-mimalloc.workspace = true
 either.workspace = true
 
 [dev-dependencies]

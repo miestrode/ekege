@@ -8,8 +8,3 @@ pub mod map;
 pub mod plan;
 pub mod rule;
 pub mod term;
-
-use mimalloc::MiMalloc;
-
-#[global_allocator]
-static GLOBAL_ALLOCATOR: MiMalloc = MiMalloc;

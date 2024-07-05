@@ -6,7 +6,6 @@ resolver = "2"
 ekege = { path = "./crates/ekege/" }
 ekege-macros = { path = "./crates/ekege-macros" }
 
-mimalloc = "0.1.43"
 indexmap = "2.2.6"
 either = "1.13.0"
 
@@ -21,4 +20,4 @@ codegen-units = 1
 
 [profile.tests]
 inherits = "dev"
-optlevel = 3     # Needed for some integration
+opt-level = 3    # Needed for some integration
