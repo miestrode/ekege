@@ -1,8 +1,8 @@
 <div align=center>
     <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="/assets/logo (dark).svg" >
-        <source media="(prefers-color-scheme: light)" srcset="/assets/logo (light).svg" >
-        <img src="/assets/logo (light).svg" width="400px" alt="Ekege logo">
+        <source media="(prefers-color-scheme: dark)" srcset="/assets/logo (dark).svg?sanitize=true" >
+        <source media="(prefers-color-scheme: light)" srcset="/assets/logo (light).svg?sanitize=true" >
+        <img src="/assets/logo (light).svg?sanitize=true" width="400px" alt="Ekege logo">
     </picture>
     <hr/>
 </div>
