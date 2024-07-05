@@ -14,14 +14,16 @@ pub struct MapSignature {
 
 #[derive(Debug)]
 pub struct Map {
-    pub(crate) map_terms: IndexMap<TermTuple, TermId>,
+    pub(crate) old_map_terms: IndexMap<TermTuple, TermId>,
+    pub(crate) new_map_terms: IndexMap<TermTuple, TermId>,
     pub(crate) signature: MapSignature,
 }
 
 impl Map {
     pub(crate) fn new(signature: MapSignature) -> Self {
         Self {
-            map_terms: IndexMap::new(),
+            old_map_terms: IndexMap::new(),
+            new_map_terms: IndexMap::new(),
             signature,
         }
     }

@@ -8,7 +8,7 @@ use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
 const GRAPH_SIZE: usize = 100;
 const MAXIMUM_CYCLES: usize = 10;
 const SEED: u64 = 42;
-const TIMES: usize = 3;
+const TIMES: usize = 5;
 
 fn generate_random_graph(size: NonZeroUsize, maximum_cycles: usize, rng: &mut impl Rng) -> Domain {
     let mut database = Database::new();

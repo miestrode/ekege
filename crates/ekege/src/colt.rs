@@ -5,6 +5,7 @@ use std::{
 };
 
 use either::Either;
+use indexmap::IndexMap;
 
 use crate::{
     map::Map,
@@ -72,7 +73,7 @@ struct TupleSchematic {
 
 // TODO: No need to own all of this information
 pub(crate) struct Colt<'a> {
-    map: &'a Map,
+    map: &'a IndexMap<TermTuple, TermId>,
     schematic: &'a [&'a [SchematicAtom]],
     // TODO: Switch to LazyCell once Rust 1.80 comes out
     tuple_indices_and_requirements: UnsafeCell<Option<TupleSchematic>>,
@@ -80,9 +81,17 @@ pub(crate) struct Colt<'a> {
 }
 
 impl<'a> Colt<'a> {
-    pub(crate) fn new(map: &'a Map, schematic: &'a [&'a [SchematicAtom]]) -> Self {
+    pub(crate) fn new(
+        map: &'a Map,
+        schematic: &'a [&'a [SchematicAtom]],
+        new_terms_required: bool,
+    ) -> Self {
         Self {
-            map,
+            map: if new_terms_required {
+                &map.new_map_terms
+            } else {
+                &map.old_map_terms
+            },
             schematic,
             tuple_indices_and_requirements: UnsafeCell::new(None),
             storage: UnsafeCell::new(ColtStorage::FullVector),
@@ -168,10 +177,10 @@ impl<'a> Colt<'a> {
                     vector
                         .iter()
                         .copied()
-                        .map(|tuple_index| self.map.map_terms.get_index(tuple_index).unwrap()),
+                        .map(|tuple_index| self.map.get_index(tuple_index).unwrap()),
                 )
             } else if let ColtStorage::FullVector = colt_storage {
-                Either::Right(self.map.map_terms.iter())
+                Either::Right(self.map.iter())
             } else {
                 return None;
             })

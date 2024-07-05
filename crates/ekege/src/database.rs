@@ -11,13 +11,13 @@ use crate::{
     term::{TermId, TermTable, TreeTerm, TreeTermInput},
 };
 
-enum SearchColts<'a> {
-    OwnedReferences(BTreeMap<ColtId, &'a Colt<'a>>),
-    ReferencedOwneds(&'a BTreeMap<ColtId, Colt<'a>>),
+enum SearchColts<'a, 'b> {
+    OwnedReferences(BTreeMap<ColtId, &'b Colt<'a>>),
+    ReferencedOwneds(&'b BTreeMap<ColtId, Colt<'a>>),
 }
 
-impl<'a> SearchColts<'a> {
-    fn to_owned_references(&self) -> BTreeMap<ColtId, &'a Colt<'a>> {
+impl<'a, 'b> SearchColts<'a, 'b> {
+    fn to_owned_references(&self) -> BTreeMap<ColtId, &'b Colt<'a>> {
         match self {
             Self::OwnedReferences(colts) => colts.clone(),
             Self::ReferencedOwneds(colts) => colts.iter().map(|(&id, colt)| (id, colt)).collect(),
@@ -25,7 +25,7 @@ impl<'a> SearchColts<'a> {
     }
 }
 
-impl<'a> Index<ColtId> for SearchColts<'a> {
+impl<'a, 'b> Index<ColtId> for SearchColts<'a, 'b> {
     type Output = Colt<'a>;
 
     fn index(&self, index: ColtId) -> &Self::Output {
@@ -87,10 +87,16 @@ impl Database {
 
         let type_id = map.signature.output_type_id;
 
-        *self.maps[map_id.0]
-            .map_terms
-            .entry(term_tuple)
-            .or_insert_with(|| self.term_type_table.insert_flat_term(type_id))
+        let map = &mut self.maps[map_id.0];
+
+        let term_id = *map
+            .old_map_terms
+            .entry(term_tuple.clone())
+            .or_insert_with(|| self.term_type_table.insert_flat_term(type_id));
+
+        map.new_map_terms.insert(term_tuple, term_id);
+
+        term_id
     }
 
     pub fn new_tree_term(&mut self, term: &TreeTerm) -> TermId {
@@ -111,7 +117,7 @@ impl Database {
     }
 
     fn map_member_term_id(&self, map_id: MapId, map_member: TermTuple) -> Option<TermId> {
-        self.maps[map_id.0].map_terms.get(&map_member).copied()
+        self.maps[map_id.0].old_map_terms.get(&map_member).copied()
     }
 
     pub fn term_id(&self, term: &TreeTerm) -> Option<TermId> {
@@ -142,7 +148,7 @@ impl Database {
     }
 
     fn search_inner(
-        colts: SearchColts<'_>,
+        colts: SearchColts<'_, '_>,
         query_plan_sections: &[QueryPlanSection],
         current_substitution: &mut BTreeMap<QueryVariable, TermId>,
         substitutions: &mut Vec<BTreeMap<QueryVariable, TermId>>,
@@ -188,16 +194,12 @@ impl Database {
                         }
                     }
 
-                    if query_plan_sections.len() == 1 {
-                        substitutions.push(current_substitution.clone());
-                    } else {
-                        Self::search_inner(
-                            SearchColts::OwnedReferences(new_colts),
-                            &query_plan_sections[1..],
-                            current_substitution,
-                            substitutions,
-                        );
-                    }
+                    Self::search_inner(
+                        SearchColts::OwnedReferences(new_colts),
+                        &query_plan_sections[1..],
+                        current_substitution,
+                        substitutions,
+                    );
                 }
 
                 for variable in cover.tuple_indices().keys() {
@@ -211,27 +213,52 @@ impl Database {
         &self,
         executable_query_plan: &ExecutableQueryPlan,
     ) -> Vec<BTreeMap<QueryVariable, TermId>> {
-        let colts = executable_query_plan
+        let mut substitutions = Vec::new();
+
+        let mut colts = executable_query_plan
             .colt_schematics
             .iter()
             .map(|(&colt_id, schematic)| {
                 (
                     colt_id,
-                    Colt::new(&self.maps[schematic.map_id.0], &schematic.tuple_schematics),
+                    Colt::new(
+                        &self.maps[schematic.map_id.0],
+                        &schematic.tuple_schematics,
+                        false,
+                    ),
                 )
             })
-            .collect();
+            .collect::<BTreeMap<_, _>>();
 
-        let mut substitutions = Vec::new();
+        for (&new_required_colt_id, schematic) in executable_query_plan.colt_schematics.iter() {
+            let no_new_terms_required_colt = colts
+                .insert(
+                    new_required_colt_id,
+                    Colt::new(
+                        &self.maps[schematic.map_id.0],
+                        &schematic.tuple_schematics,
+                        true,
+                    ),
+                )
+                .unwrap();
 
-        Self::search_inner(
-            SearchColts::ReferencedOwneds(&colts),
-            &executable_query_plan.query_plan.sections,
-            &mut BTreeMap::new(),
-            &mut substitutions,
-        );
+            Self::search_inner(
+                SearchColts::ReferencedOwneds(&colts),
+                &executable_query_plan.query_plan.sections,
+                &mut BTreeMap::new(),
+                &mut substitutions,
+            );
+
+            colts.insert(new_required_colt_id, no_new_terms_required_colt);
+        }
 
         substitutions
+    }
+
+    fn clear_new_map_terms(&mut self) {
+        for map in &mut self.maps {
+            map.new_map_terms.clear();
+        }
     }
 
     pub(crate) fn run_rules_once(&mut self, rules: &[ExecutableFlatRule]) {
@@ -239,6 +266,8 @@ impl Database {
             .iter()
             .map(|rule| self.search(&rule.query_plan))
             .collect::<Vec<_>>();
+
+        self.clear_new_map_terms();
 
         let mut created_terms = Vec::new();
 
