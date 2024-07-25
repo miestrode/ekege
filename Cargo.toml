@@ -20,4 +20,4 @@ codegen-units = 1
 
 [profile.tests]
 inherits = "dev"
-opt-level = 3    # Needed for some integration
+opt-level = 3    # Needed for some integration tests
