@@ -161,7 +161,7 @@ impl Database {
             let cover = &colts[query_plan_sections[0].sub_map_terms[0].colt_id];
 
             // SAFETY: As shown below, `cover` won't be changed while it is being iterated, making `get` and `iter` safe
-            for tuple in unsafe { cover.iter() } {
+            'tuple_attempt: for tuple in unsafe { cover.iter() } {
                 current_substitution.extend(
                     cover
                         .tuple_indices()
@@ -170,43 +170,37 @@ impl Database {
                         .zip(tuple.term_ids.iter().copied()),
                 );
 
-                'tuple_attempt: {
-                    let mut new_colts = colts.to_owned_references();
+                let mut new_colts = colts.to_owned_references();
 
-                    for &SubMapTerm { colt_id, .. } in &query_plan_sections[0].sub_map_terms
-                        [if query_plan_sections.len() == 1 { 1 } else { 0 }..]
-                    {
-                        let colt = &new_colts[&colt_id];
-                        let subtuple = TermTuple {
-                            term_ids: colt
-                                .tuple_indices()
-                                .keys()
-                                .map(|variable| current_substitution[variable])
-                                .collect(),
-                        };
+                for &SubMapTerm { colt_id, .. } in &query_plan_sections[0].sub_map_terms
+                    [if query_plan_sections.len() == 1 { 1 } else { 0 }..]
+                {
+                    let colt = &new_colts[&colt_id];
+                    let subtuple = TermTuple {
+                        term_ids: colt
+                            .tuple_indices()
+                            .keys()
+                            .map(|variable| current_substitution[variable])
+                            .collect(),
+                    };
 
-                        // SAFETY: When this is the final section of the plan, we ignore the first COLT
-                        // explicitly, as `new_colts` won't be used. Otherwise, this isn't the last section,
-                        // and thus forcing must've already happened in `iter()`, and this internal `force()`
-                        // is a no-op
-                        if let Some(subtrie) = unsafe { colt.get(&subtuple) } {
-                            new_colts.insert(colt_id, subtrie);
-                        } else {
-                            break 'tuple_attempt;
-                        }
+                    // SAFETY: When this is the final section of the plan, we ignore the first COLT
+                    // explicitly, as `new_colts` won't be used. Otherwise, this isn't the last section,
+                    // and thus forcing must've already happened in `iter()`, and this internal `force()`
+                    // is a no-op
+                    if let Some(subtrie) = unsafe { colt.get(&subtuple) } {
+                        new_colts.insert(colt_id, subtrie);
+                    } else {
+                        break 'tuple_attempt;
                     }
-
-                    Self::search_inner(
-                        SearchColts::OwnedReferences(new_colts),
-                        &query_plan_sections[1..],
-                        current_substitution,
-                        substitutions,
-                    );
                 }
 
-                for variable in cover.tuple_indices().keys() {
-                    current_substitution.remove(variable);
-                }
+                Self::search_inner(
+                    SearchColts::OwnedReferences(new_colts),
+                    &query_plan_sections[1..],
+                    current_substitution,
+                    substitutions,
+                )
             }
         }
     }
