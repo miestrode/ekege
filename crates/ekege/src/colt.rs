@@ -24,6 +24,11 @@ pub(crate) struct TermTuple {
     pub(crate) term_ids: Vec<TermId>,
 }
 
+struct TupleSchematic {
+    indices: BTreeMap<QueryVariable, usize>,
+    requirements: BTreeMap<QueryVariable, Vec<usize>>,
+}
+
 // Given a valid tuple for given schematic atoms, which parts fo export for free join?
 // For example, given schematic (0: X, 1: Y, 2: X), we would export indices 1 and 2, so that for
 // the tuple (3, 4, 3), for example, we would extract (4, 3)
@@ -66,17 +71,11 @@ enum ColtStorage<'a> {
     FullVector,
 }
 
-struct TupleSchematic {
-    indices: BTreeMap<QueryVariable, usize>,
-    requirements: BTreeMap<QueryVariable, Vec<usize>>,
-}
-
 // TODO: No need to own all of this information
 pub(crate) struct Colt<'a> {
     map: &'a IndexMap<TermTuple, TermId>,
     schematic: &'a [&'a [SchematicAtom]],
-    // TODO: Switch to LazyCell once Rust 1.80 comes out
-    tuple_indices_and_requirements: UnsafeCell<Option<TupleSchematic>>,
+    tuple_indices_and_requirements: TupleSchematic,
     storage: UnsafeCell<ColtStorage<'a>>,
 }
 
@@ -92,25 +91,18 @@ impl<'a> Colt<'a> {
             } else {
                 &map.old_map_terms
             },
+            tuple_indices_and_requirements: tuple_schematic(schematic[0]),
             schematic,
-            tuple_indices_and_requirements: UnsafeCell::new(None),
             storage: UnsafeCell::new(ColtStorage::FullVector),
         }
     }
 
-    fn tuple_indices_and_requirements(&self) -> &TupleSchematic {
-        // SAFETY: It is impossible to have an existing reference to the value in the `UnsafeCell` while the
-        // mutable reference exists due to the API
-        unsafe { &mut *self.tuple_indices_and_requirements.get() }
-            .get_or_insert_with(|| tuple_schematic(self.schematic[0]))
-    }
-
     pub(crate) fn tuple_indices(&self) -> &BTreeMap<QueryVariable, usize> {
-        &self.tuple_indices_and_requirements().indices
+        &self.tuple_indices_and_requirements.indices
     }
 
     fn tuple_requirements(&self) -> impl Iterator<Item = &[usize]> + '_ {
-        self.tuple_indices_and_requirements()
+        self.tuple_indices_and_requirements
             .requirements
             .values()
             .map(Vec::as_slice)
@@ -152,8 +144,10 @@ impl<'a> Colt<'a> {
             map.entry(tuple)
                 .or_insert(Colt {
                     map: self.map,
-                    tuple_indices_and_requirements: UnsafeCell::new(None),
                     schematic: &self.schematic[1..],
+                    tuple_indices_and_requirements: tuple_schematic(
+                        self.schematic.get(1).unwrap_or(&Vec::new().as_slice()),
+                    ),
                     storage: UnsafeCell::new(ColtStorage::Vector(Vec::new())),
                 })
                 .vector_mut()
