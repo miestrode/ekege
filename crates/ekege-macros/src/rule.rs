@@ -8,18 +8,16 @@ use syn::{
     token, Ident, Lifetime, Token,
 };
 
-use crate::crate_root;
+use crate::CRATE_ROOT;
 
 #[derive(PartialOrd, Ord, Clone, Copy, Hash, PartialEq, Eq)]
 struct Id(usize);
 
 impl ToTokens for Id {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
         let id = self.0;
 
-        tokens.append_all(quote! { #crate_root::id::Id(#id) });
+        tokens.append_all(quote! { #CRATE_ROOT::id::Id(#id) });
     }
 }
 
@@ -371,60 +369,14 @@ enum FlatMapTermPatternInput {
     QueryVariable(QueryVariable),
 }
 
-impl ToTokens for FlatMapTermPatternInput {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
-        tokens.append_all(match self {
-            FlatMapTermPatternInput::TermId(term_id) => 
-                quote! { #crate_root::rule::FlatMapTermPatternInput::TermId(#term_id) },
-            FlatMapTermPatternInput::QueryVariable(query_variable) => 
-                quote! { #crate_root::rule::FlatMapTermPatternInput::QueryVariable(#query_variable) },
-        });
-    }
-}
-
 struct FlatMapTermPattern {
     map_id: Ident,
     new_terms_required: bool,
     inputs: Vec<FlatMapTermPatternInput>,
 }
 
-impl ToTokens for FlatMapTermPattern {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
-        let map_id = &self.map_id;
-        let inputs = &self.inputs;
-
-        tokens.append_all(quote! {
-            #crate_root::rule::FlatMapTermPattern {
-                map_id: #map_id,
-                inputs: vec![#(#inputs),*]
-            }
-        });
-    }
-}
-
 struct FlatQuery {
     map_term_patterns: Vec<FlatMapTermPattern>,
-    query_variables: usize,
-}
-
-impl ToTokens for FlatQuery {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
-        let flat_map_term_patterns = &self.map_term_patterns;
-        let variables = (0..self.query_variables).map(Id);
-
-        tokens.append_all(quote! {
-            #crate_root::rule::FlatQuery {
-                map_term_patterns: vec![#(#flat_map_term_patterns),*],
-                variables: vec![#(#variables),*],
-            }
-        });
-    }
 }
 
 #[derive(Clone)]
@@ -435,14 +387,12 @@ enum SchematicAtomInner {
 
 impl ToTokens for SchematicAtomInner {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
         tokens.append_all(match self {
             SchematicAtomInner::Variable(variable) => quote! {
-                #crate_root::plan::SchematicAtomInner::Variable(#variable)
+                #CRATE_ROOT::plan::SchematicAtomInner::Variable(#variable)
             },
             SchematicAtomInner::TermId(term_id) => quote! {
-                #crate_root::plan::SchematicAtomInner::TermId(#term_id)
+                #CRATE_ROOT::plan::SchematicAtomInner::TermId(#term_id)
             },
         });
     }
@@ -455,13 +405,11 @@ struct SchematicAtom {
 
 impl ToTokens for SchematicAtom {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
         let tuple_index = &self.tuple_index;
         let inner = &self.inner;
 
         tokens.append_all(quote! {
-            #crate_root::plan::SchematicAtom {
+            #CRATE_ROOT::plan::SchematicAtom {
                 tuple_index: #tuple_index,
                 inner: #inner,
             }
@@ -478,15 +426,13 @@ struct SubMapTerm {
 
 impl ToTokens for SubMapTerm {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
         let map_id = &self.map_id;
         let new_terms_required = self.new_terms_required;
         let colt_id = &self.colt_id;
         let atoms = &self.atoms;
 
         tokens.append_all(quote! {
-            #crate_root::plan::SubMapTerm {
+            #CRATE_ROOT::plan::SubMapTerm {
                 map_id: #map_id,
                 new_terms_required: #new_terms_required,
                 colt_id: #colt_id,
@@ -502,12 +448,10 @@ struct QueryPlanSection {
 
 impl ToTokens for QueryPlanSection {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
         let sub_map_terms = &self.sub_map_terms;
 
         tokens.append_all(quote! {
-            #crate_root::plan::QueryPlanSection {
+            #CRATE_ROOT::plan::QueryPlanSection {
                 sub_map_terms: vec![#(#sub_map_terms),*],
             }
         });
@@ -520,12 +464,10 @@ pub struct QueryPlan {
 
 impl ToTokens for QueryPlan {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
         let sections = &self.sections;
 
         tokens.append_all(quote! {
-            #crate_root::plan::QueryPlan {
+            #CRATE_ROOT::plan::QueryPlan {
                 sections: vec![#(#sections),*],
             }
         });
@@ -611,15 +553,13 @@ enum FlatTermPatternInput {
 
 impl ToTokens for FlatTermPatternInput {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
         tokens.append_all(match self {
             FlatTermPatternInput::TermId(term_id) => 
-                quote! { #crate_root::rule::FlatTermPatternInput::TermId(#term_id) },
+                quote! { #CRATE_ROOT::rule::FlatTermPatternInput::TermId(#term_id) },
             FlatTermPatternInput::QueryVariable(query_variable) => 
-                quote! { #crate_root::rule::FlatTermPatternInput::QueryVariable(#query_variable) },
+                quote! { #CRATE_ROOT::rule::FlatTermPatternInput::QueryVariable(#query_variable) },
             FlatTermPatternInput::PreviouslyCreatedFlatTermIndex(previously_created_flat_term_index) =>
-                quote! { #crate_root::rule::FlatTermPatternInput::PreviouslyCreatedFlatTermIndex(#previously_created_flat_term_index) },
+                quote! { #CRATE_ROOT::rule::FlatTermPatternInput::PreviouslyCreatedFlatTermIndex(#previously_created_flat_term_index) },
         });
     }
 }
@@ -631,13 +571,11 @@ struct FlatTermPattern {
 
 impl ToTokens for FlatTermPattern {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
         let map_id = &self.map_id;
         let inputs = &self.inputs;
 
         tokens.append_all(quote! {
-            #crate_root::rule::FlatTermPattern {
+            #CRATE_ROOT::rule::FlatTermPattern {
                 map_id: #map_id,
                 inputs: vec![#(#inputs),*]
             }
@@ -652,13 +590,11 @@ enum FlatRulePayload {
 
 impl ToTokens for FlatRulePayload {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
         tokens.append_all(match self {
             FlatRulePayload::Creation(term_pattern) =>
-                quote! { #crate_root::rule::FlatRulePayload::Creation(#term_pattern) },
+                quote! { #CRATE_ROOT::rule::FlatRulePayload::Creation(#term_pattern) },
             FlatRulePayload::Union(term_pattern_input_a, term_pattern_input_b) =>
-                quote! { #crate_root::rule::FlatRulePayload::Union(#term_pattern_input_a, #term_pattern_input_b) },
+                quote! { #CRATE_ROOT::rule::FlatRulePayload::Union(#term_pattern_input_a, #term_pattern_input_b) },
         })
     }
 }
@@ -692,7 +628,6 @@ impl From<&TreeRule> for FlatRule {
         Self {
             query_plan: FlatQuery {
                 map_term_patterns,
-                query_variables: query_variable_table.variables,
             }.into(),
             payloads: flat_rule_payloads,
         }
@@ -701,13 +636,11 @@ impl From<&TreeRule> for FlatRule {
 
 impl ToTokens for FlatRule {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
         let query_plan = &self.query_plan;
         let flat_rule_payloads = &self.payloads;
 
         tokens.append_all(quote! {
-            #crate_root::rule::FlatRule {
+            #CRATE_ROOT::rule::FlatRule {
                 query_plan: #query_plan,
                 payloads: vec![#(#flat_rule_payloads),*]
             }

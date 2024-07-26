@@ -5,7 +5,7 @@ use syn::{
     Ident, Token,
 };
 
-use crate::crate_root;
+use crate::CRATE_ROOT;
 
 pub(crate) struct MapSignature {
     input_type_ids: Vec<Ident>,
@@ -14,13 +14,11 @@ pub(crate) struct MapSignature {
 
 impl ToTokens for MapSignature {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
         let input_type_ids = &self.input_type_ids;
         let output_type_id = &self.output_type_id;
 
         tokens.append_all(quote! {
-            #crate_root::map::MapSignature {
+            #CRATE_ROOT::map::MapSignature {
                 input_type_ids: vec![#(#input_type_ids),*],
                 output_type_id: #output_type_id
             }

@@ -1,10 +1,10 @@
-use std::env;
+use std::{env, sync::LazyLock};
 
 use equivalence::Equivalence;
 use map::MapSignature;
 use proc_macro2::Span;
 use proc_macro_crate::{crate_name, FoundCrate};
-use quote::ToTokens;
+use quote::{ToTokens, TokenStreamExt};
 use rewrite::Rewrite;
 use rule::{FlatRule, TreeRule};
 use syn::{parse_macro_input, Ident};
@@ -16,9 +16,19 @@ mod rewrite;
 mod rule;
 mod term;
 
-pub(crate) fn crate_root() -> Ident {
-    Ident::new(
-        &if env::var("CARGO_PKG_NAME").unwrap() == "ekege" {
+pub(crate) struct CrateRoot {
+    root: LazyLock<String>,
+}
+
+impl ToTokens for CrateRoot {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        tokens.append(Ident::new(&self.root, Span::call_site()));
+    }
+}
+
+pub(crate) static CRATE_ROOT: CrateRoot = CrateRoot {
+    root: LazyLock::new(|| {
+        if env::var("CARGO_PKG_NAME").unwrap() == "ekege" {
             String::from("ekege")
         } else if let FoundCrate::Name(root_name) =
             crate_name("ekege").expect("proc-macro-crate could not detect ekege")
@@ -26,10 +36,9 @@ pub(crate) fn crate_root() -> Ident {
             root_name
         } else {
             unreachable!()
-        },
-        Span::call_site(),
-    )
-}
+        }
+    }),
+};
 
 #[proc_macro]
 pub fn tree_term(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {

@@ -5,7 +5,7 @@ use syn::{
     token, Ident, Token,
 };
 
-use crate::crate_root;
+use crate::CRATE_ROOT;
 
 enum TreeTermInput {
     TreeTerm(TreeTerm),
@@ -14,14 +14,12 @@ enum TreeTermInput {
 
 impl ToTokens for TreeTermInput {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
         tokens.append_all(match self {
             TreeTermInput::TreeTerm(tree_term) => {
-                quote! { #crate_root::term::TreeTermInput::TreeTerm(#tree_term) }
+                quote! { #CRATE_ROOT::term::TreeTermInput::TreeTerm(#tree_term) }
             }
             TreeTermInput::TermId(term_id) => {
-                quote! { #crate_root::term::TreeTermInput::TermId(#term_id) }
+                quote! { #CRATE_ROOT::term::TreeTermInput::TermId(#term_id) }
             }
         });
     }
@@ -44,13 +42,11 @@ pub(crate) struct TreeTerm {
 
 impl ToTokens for TreeTerm {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let crate_root = crate_root();
-
         let map_id = &self.map_id;
         let inputs = &self.inputs;
 
         tokens.append_all(quote! {
-            #crate_root::term::TreeTerm::new(#map_id, vec![#(#inputs),*])
+            #CRATE_ROOT::term::TreeTerm::new(#map_id, vec![#(#inputs),*])
         });
     }
 }

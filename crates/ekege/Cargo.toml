@@ -14,8 +14,8 @@ indexmap.workspace = true
 either.workspace = true
 
 [dev-dependencies]
-criterion = { version = "0.5.1", features = ["html_reports"] }
-rand = "0.8.5"
+criterion.workspace = true
+rand.workspace = true
 
 [[bench]]
 name = "graph"

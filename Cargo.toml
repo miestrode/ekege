@@ -3,16 +3,22 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.dependencies]
-ekege = { path = "./crates/ekege/" }
-ekege-macros = { path = "./crates/ekege-macros" }
-
 indexmap = "2.2.6"
 either = "1.13.0"
 
+# Workspace members
+ekege = { path = "./crates/ekege/" }
+ekege-macros = { path = "./crates/ekege-macros" }
+
+# Macro-related dependencies
 proc-macro2 = "1.0.86"
 quote = "1.0.36"
 syn = "2.0.72"
 proc-macro-crate = "3.1.0"
+
+# Development dependenecies
+criterion = { version = "0.5.1", features = ["html_reports"] }
+rand = "0.8.5"
 
 [profile.release]
 lto = true
