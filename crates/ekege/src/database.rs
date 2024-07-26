@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, ops::Index};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ops::Index,
+};
 
 use ekege_macros::map_signature;
 
@@ -89,11 +92,13 @@ impl Database {
 
         let map = &mut self.maps[map_id.0];
 
-        let term_id = *map
-            .old_map_terms
-            .entry(term_tuple.clone())
-            .or_insert_with(|| self.term_type_table.insert_flat_term(type_id));
+        if let Some(term_id) = map.old_map_terms.get(&term_tuple).copied() {
+            return term_id;
+        }
 
+        let term_id = self.term_type_table.insert_flat_term(type_id);
+
+        map.old_map_terms.insert(term_tuple.clone(), term_id);
         map.new_map_terms.insert(term_tuple, term_id);
 
         term_id
@@ -151,10 +156,10 @@ impl Database {
         colts: SearchColts<'_, '_>,
         query_plan_sections: &[QueryPlanSection],
         current_substitution: &mut BTreeMap<QueryVariable, TermId>,
-        substitutions: &mut Vec<BTreeMap<QueryVariable, TermId>>,
+        substitutions: &mut BTreeSet<BTreeMap<QueryVariable, TermId>>,
     ) {
         if query_plan_sections.is_empty() {
-            substitutions.push(current_substitution.clone())
+            substitutions.insert(current_substitution.clone());
         } else {
             let cover = &colts[query_plan_sections[0].sub_map_terms[0].colt_id];
 
@@ -212,10 +217,10 @@ impl Database {
     fn search(
         &self,
         executable_query_plan: &ExecutableQueryPlan,
-    ) -> Vec<BTreeMap<QueryVariable, TermId>> {
-        let mut substitutions = Vec::new();
+    ) -> BTreeSet<BTreeMap<QueryVariable, TermId>> {
+        let mut substitutions = BTreeSet::new();
 
-        let mut colts = executable_query_plan
+        let colts = executable_query_plan
             .colt_schematics
             .iter()
             .map(|(&colt_id, schematic)| {
@@ -224,33 +229,18 @@ impl Database {
                     Colt::new(
                         &self.maps[schematic.map_id.0],
                         &schematic.tuple_schematics,
-                        false,
+                        schematic.new_terms_required,
                     ),
                 )
             })
             .collect::<BTreeMap<_, _>>();
 
-        for (&new_required_colt_id, schematic) in executable_query_plan.colt_schematics.iter() {
-            let no_new_terms_required_colt = colts
-                .insert(
-                    new_required_colt_id,
-                    Colt::new(
-                        &self.maps[schematic.map_id.0],
-                        &schematic.tuple_schematics,
-                        true,
-                    ),
-                )
-                .unwrap();
-
-            Self::search_inner(
-                SearchColts::ReferencedOwneds(&colts),
-                &executable_query_plan.query_plan.sections,
-                &mut BTreeMap::new(),
-                &mut substitutions,
-            );
-
-            colts.insert(new_required_colt_id, no_new_terms_required_colt);
-        }
+        Self::search_inner(
+            SearchColts::ReferencedOwneds(&colts),
+            &executable_query_plan.query_plan.sections,
+            &mut BTreeMap::new(),
+            &mut substitutions,
+        );
 
         substitutions
     }

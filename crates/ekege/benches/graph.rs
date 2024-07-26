@@ -8,7 +8,7 @@ use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
 const GRAPH_SIZE: usize = 100;
 const MAXIMUM_CYCLES: usize = 10;
 const SEED: u64 = 42;
-const TIMES: usize = 5;
+const TIMES: usize = 3;
 
 fn generate_random_graph(size: NonZeroUsize, maximum_cycles: usize, rng: &mut impl Rng) -> Domain {
     let mut database = Database::new();
@@ -19,10 +19,11 @@ fn generate_random_graph(size: NonZeroUsize, maximum_cycles: usize, rng: &mut im
     let edge = database.new_map(map_signature! { (node, node) -> unit });
     let path = database.new_map(map_signature! { (node, node) -> unit });
 
-    let edge_implies_path = rule! { edge('x, 'y) -> path('x, 'y) };
-    let two_paths_implies_path = rule! { path('x, 'y), path('y, 'z) -> path('x, 'z) };
-
-    let rules = [edge_implies_path, two_paths_implies_path];
+    let rules = [
+        rule! { edge!('x, 'y) -> path('x, 'y) },
+        rule! { path!('x, 'y), path('y, 'z) -> path('x, 'z) },
+        rule! { path!('y, 'z), path('x, 'y) -> path('x, 'z) },
+    ];
 
     let mut nodes = vec![database.new_constant(node)];
 

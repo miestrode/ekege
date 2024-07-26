@@ -19,6 +19,7 @@ pub struct SchematicAtom {
 #[derive(Debug)]
 pub struct SubMapTerm {
     pub map_id: MapId,
+    pub new_terms_required: bool,
     pub colt_id: ColtId,
     pub atoms: Vec<SchematicAtom>,
 }
@@ -31,6 +32,7 @@ pub struct QueryPlanSection {
 pub(crate) struct ColtSchematic<'plan> {
     pub(crate) map_id: MapId,
     pub(crate) tuple_schematics: Vec<&'plan [SchematicAtom]>,
+    pub(crate) new_terms_required: bool,
 }
 
 pub struct ExecutableQueryPlan<'plan> {
@@ -54,6 +56,7 @@ impl QueryPlan {
                     .or_insert(ColtSchematic {
                         map_id: sub_map_term.map_id,
                         tuple_schematics: Vec::new(),
+                        new_terms_required: sub_map_term.new_terms_required,
                     })
                     .tuple_schematics
                     .push(&sub_map_term.atoms);

@@ -107,12 +107,15 @@ impl TreeTermPatternInput {
 #[derive(Clone)]
 pub(crate) struct TreeTermPattern {
     map_id: Ident,
+    new_terms_required: bool,
     inputs: Vec<TreeTermPatternInput>,
 }
 
 impl Parse for TreeTermPattern {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let map_id = input.parse::<Ident>()?;
+        
+        let new_terms_required = input.parse::<Option<Token![!]>>()?.is_some();
 
         let content;
         parenthesized!(content in input);
@@ -122,7 +125,7 @@ impl Parse for TreeTermPattern {
             .into_iter()
             .collect();
 
-        Ok(Self { map_id, inputs })
+        Ok(Self { map_id, new_terms_required, inputs })
     }
 }
 
@@ -161,6 +164,7 @@ impl TreeTermPattern {
 
         let root_flat_map_term_pattern = FlatMapTermPattern {
             map_id: self.map_id.clone(),
+            new_terms_required: self.new_terms_required,
             inputs,
         };
 
@@ -382,6 +386,7 @@ impl ToTokens for FlatMapTermPatternInput {
 
 struct FlatMapTermPattern {
     map_id: Ident,
+    new_terms_required: bool,
     inputs: Vec<FlatMapTermPatternInput>,
 }
 
@@ -466,6 +471,7 @@ impl ToTokens for SchematicAtom {
 
 struct SubMapTerm {
     map_id: Ident,
+    new_terms_required: bool,
     colt_id: ColtId,
     atoms: Vec<SchematicAtom>,
 }
@@ -475,12 +481,14 @@ impl ToTokens for SubMapTerm {
         let crate_root = crate_root();
 
         let map_id = &self.map_id;
+        let new_terms_required = self.new_terms_required;
         let colt_id = &self.colt_id;
         let atoms = &self.atoms;
 
         tokens.append_all(quote! {
             #crate_root::plan::SubMapTerm {
                 map_id: #map_id,
+                new_terms_required: #new_terms_required,
                 colt_id: #colt_id,
                 atoms: vec![#(#atoms),*],
             }
@@ -574,6 +582,7 @@ impl From<FlatQuery> for QueryPlan {
                             atoms: pattern_constant_atoms
                                 .remove(&pattern_index)
                                 .unwrap_or(Vec::new()),
+                            new_terms_required: query.map_term_patterns[pattern_index].new_terms_required,
                         })
                         .atoms
                         .push(SchematicAtom {
