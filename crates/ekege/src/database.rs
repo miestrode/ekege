@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    ops::Index,
-};
+use std::{collections::BTreeMap, ops::Index};
 
 use ekege_macros::map_signature;
 
@@ -156,10 +153,10 @@ impl Database {
         colts: SearchColts<'_, '_>,
         query_plan_sections: &[QueryPlanSection],
         current_substitution: &mut BTreeMap<QueryVariable, TermId>,
-        substitutions: &mut BTreeSet<BTreeMap<QueryVariable, TermId>>,
+        substitutions: &mut Vec<BTreeMap<QueryVariable, TermId>>,
     ) {
         if query_plan_sections.is_empty() {
-            substitutions.insert(current_substitution.clone());
+            substitutions.push(current_substitution.clone());
         } else {
             let cover = &colts[query_plan_sections[0].sub_map_terms[0].colt_id];
 
@@ -217,8 +214,8 @@ impl Database {
     fn search(
         &self,
         executable_query_plan: &ExecutableQueryPlan,
-    ) -> BTreeSet<BTreeMap<QueryVariable, TermId>> {
-        let mut substitutions = BTreeSet::new();
+    ) -> Vec<BTreeMap<QueryVariable, TermId>> {
+        let mut substitutions = Vec::new();
 
         let colts = executable_query_plan
             .colt_schematics
