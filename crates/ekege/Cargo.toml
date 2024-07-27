@@ -5,8 +5,6 @@ edition = "2021"
 description = "An alternative egglog engine"
 authors = ["Yoav Grimland <miestrode@proton.me>"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 ekege-macros.workspace = true
 
