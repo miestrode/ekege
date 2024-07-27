@@ -1,40 +1,15 @@
-use std::{collections::BTreeMap, ops::Index};
+use std::collections::BTreeMap;
 
 use ekege_macros::map_signature;
 
 use crate::{
-    colt::{Colt, TermTuple},
+    colt::{Colt, ColtRef, TermTuple},
     id::{Id, IdGenerator},
     map::{Map, MapId, MapSignature, TypeId},
     plan::{ColtId, ExecutableQueryPlan, QueryPlanSection, SubMapTerm},
     rule::{ExecutableFlatRule, FlatRulePayload, QueryVariable},
     term::{TermId, TermTable, TreeTerm, TreeTermInput},
 };
-
-enum SearchColts<'a, 'b> {
-    OwnedReferences(BTreeMap<ColtId, &'b Colt<'a>>),
-    ReferencedOwneds(&'b BTreeMap<ColtId, Colt<'a>>),
-}
-
-impl<'a, 'b> SearchColts<'a, 'b> {
-    fn to_owned_references(&self) -> BTreeMap<ColtId, &'b Colt<'a>> {
-        match self {
-            Self::OwnedReferences(colts) => colts.clone(),
-            Self::ReferencedOwneds(colts) => colts.iter().map(|(&id, colt)| (id, colt)).collect(),
-        }
-    }
-}
-
-impl<'a, 'b> Index<ColtId> for SearchColts<'a, 'b> {
-    type Output = Colt<'a>;
-
-    fn index(&self, index: ColtId) -> &Self::Output {
-        match self {
-            SearchColts::OwnedReferences(colts) => colts[&index],
-            SearchColts::ReferencedOwneds(colts) => &colts[&index],
-        }
-    }
-}
 
 pub struct Database {
     maps: Vec<Map>,
@@ -150,7 +125,7 @@ impl Database {
     }
 
     fn search_inner(
-        colts: SearchColts<'_, '_>,
+        colts: &mut BTreeMap<ColtId, ColtRef<'_, '_>>,
         query_plan_sections: &[QueryPlanSection],
         current_substitution: &mut BTreeMap<QueryVariable, TermId>,
         substitutions: &mut Vec<BTreeMap<QueryVariable, TermId>>,
@@ -158,7 +133,7 @@ impl Database {
         if query_plan_sections.is_empty() {
             substitutions.push(current_substitution.clone());
         } else {
-            let cover = &colts[query_plan_sections[0].sub_map_terms[0].colt_id];
+            let cover = colts[&query_plan_sections[0].sub_map_terms[0].colt_id].colt;
 
             // SAFETY: As shown below, `cover` won't be changed while it is being iterated, making `get` and `iter` safe
             'tuple_attempt: for tuple in unsafe { cover.iter() } {
@@ -170,12 +145,13 @@ impl Database {
                         .zip(tuple.term_ids.iter().copied()),
                 );
 
-                let mut new_colts = colts.to_owned_references();
+                let sub_map_terms = &query_plan_sections[0].sub_map_terms
+                    [if query_plan_sections.len() == 1 { 1 } else { 0 }..];
 
-                for &SubMapTerm { colt_id, .. } in &query_plan_sections[0].sub_map_terms
-                    [if query_plan_sections.len() == 1 { 1 } else { 0 }..]
-                {
-                    let colt = &new_colts[&colt_id];
+                for &SubMapTerm { colt_id, .. } in sub_map_terms {
+                    let colt_ref = &colts[&colt_id];
+                    let colt = colt_ref.colt;
+
                     let subtuple = TermTuple {
                         term_ids: colt
                             .tuple_indices()
@@ -188,19 +164,25 @@ impl Database {
                     // explicitly, as `new_colts` won't be used. Otherwise, this isn't the last section,
                     // and thus forcing must've already happened in `iter()`, and this internal `force()`
                     // is a no-op
-                    if let Some(subtrie) = unsafe { colt.get(&subtuple) } {
-                        new_colts.insert(colt_id, subtrie);
+                    if let Some(subcolt) =
+                        unsafe { colt.get(&subtuple, Some(Box::new(colt_ref.clone()))) }
+                    {
+                        colts.insert(colt_id, subcolt);
                     } else {
-                        break 'tuple_attempt;
+                        continue 'tuple_attempt;
                     }
                 }
 
                 Self::search_inner(
-                    SearchColts::OwnedReferences(new_colts),
+                    colts,
                     &query_plan_sections[1..],
                     current_substitution,
                     substitutions,
-                )
+                );
+
+                for &SubMapTerm { colt_id, .. } in sub_map_terms {
+                    colts.insert(colt_id, *colts[&colt_id].parent.clone().unwrap());
+                }
             }
         }
     }
@@ -227,7 +209,10 @@ impl Database {
             .collect::<BTreeMap<_, _>>();
 
         Self::search_inner(
-            SearchColts::ReferencedOwneds(&colts),
+            &mut colts
+                .iter()
+                .map(|(colt_id, colt)| (*colt_id, ColtRef { colt, parent: None }))
+                .collect(),
             &executable_query_plan.query_plan.sections,
             &mut BTreeMap::new(),
             &mut substitutions,

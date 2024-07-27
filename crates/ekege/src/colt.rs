@@ -79,6 +79,12 @@ pub(crate) struct Colt<'a> {
     storage: UnsafeCell<ColtStorage<'a>>,
 }
 
+#[derive(Clone)]
+pub(crate) struct ColtRef<'a, 'b> {
+    pub(crate) colt: &'b Colt<'a>,
+    pub(crate) parent: Option<Box<ColtRef<'a, 'b>>>,
+}
+
 impl<'a> Colt<'a> {
     pub(crate) fn new(
         map: &'a Map,
@@ -161,7 +167,7 @@ impl<'a> Colt<'a> {
     // SAFETY: Caller must ensure storage isn't already mutably borrowed
     unsafe fn vector_iter<'b>(
         &'b self,
-    ) -> Option<impl Iterator<Item = TermTuple> + Captures<&'a ()> + 'b> {
+    ) -> Option<impl Iterator<Item = TermTuple> + Captures<(&'a (), &'b ())>> {
         // SAFTEY: We assume storage isn't already mutably borrowed
         let colt_storage = unsafe { self.storage() };
 
@@ -210,12 +216,19 @@ impl<'a> Colt<'a> {
     }
 
     // SAFETY: Caller must ensure storage isn't already borrowed
-    pub(crate) unsafe fn get(&self, tuple: &TermTuple) -> Option<&Colt<'a>> {
+    pub(crate) unsafe fn get<'b>(
+        &'b self,
+        tuple: &TermTuple,
+        parent: Option<Box<ColtRef<'a, 'b>>>,
+    ) -> Option<ColtRef<'a, '_>> {
         // SAFTEY: We assume storage isn't already borrowed
         unsafe { self.force() };
 
         // SAFTEY: We assume storage isn't already borrowed
-        unsafe { self.map() }.unwrap().get(tuple)
+        unsafe { self.map() }
+            .unwrap()
+            .get(tuple)
+            .map(move |colt| ColtRef { colt, parent })
     }
 
     // SAFETY: Caller must ensure storage isn't already borrowed
