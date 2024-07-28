@@ -245,11 +245,11 @@ impl Database {
     pub(crate) fn run_rules_once(&mut self, rules: &[ExecutableFlatRule]) {
         self.set_pre_run_map_terms();
 
+        let mut created_terms = Vec::new();
+
         for rule in rules {
             let mut rule_payload =
                 for<'a> |substitution: &'a BTreeMap<QueryVariable, TermId>| -> () {
-                    let mut created_terms = Vec::new();
-
                     for payload in rule.payloads {
                         match payload {
                             FlatRulePayload::Creation(term) => {
@@ -271,6 +271,8 @@ impl Database {
                             }
                         }
                     }
+
+                    created_terms.clear();
                 };
 
             Self::search(&self.maps, &rule.query_plan, &mut rule_payload);

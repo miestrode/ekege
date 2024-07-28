@@ -2,7 +2,6 @@ use std::num::NonZeroUsize;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use ekege::{database::Database, domain::Domain, map::map_signature, rule::rule, term::tree_term};
-
 use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
 
 const GRAPH_SIZE: usize = 100;

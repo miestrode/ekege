@@ -15,7 +15,7 @@ use crate::{
 };
 
 // TODO: Remove this once `precise_capturing` is stabilized
-trait Captures<U> {}
+pub(crate) trait Captures<U> {}
 
 impl<T: ?Sized, U> Captures<U> for T {}
 
@@ -243,30 +243,26 @@ impl<'a> Colt<'a> {
     }
 
     // SAFETY: Caller must ensure storage isn't already borrowed
-    pub(crate) unsafe fn iter(&self) -> impl Iterator<Item = Cow<TermTuple>> {
-        let iterator: Box<dyn Iterator<Item = Cow<TermTuple>>> = 'a: {
+    pub(crate) unsafe fn iter(&self) -> impl Iterator<Item = Cow<TermTuple>> + Captures<&'a ()> {
+        // SAFTEY: We assume storage isn't already borrowed
+        let map = unsafe { self.map() };
+
+        // TODO: Change this when Polonius is stable. See: https://blog.rust-lang.org/2022/08/05/nll-by-default.html
+        let subtries_unneccessary = self.schematic.len() == 1 && map.is_none();
+
+        if subtries_unneccessary {
             // SAFTEY: We assume storage isn't already borrowed
-            let map = unsafe { self.map() };
+            let Some(tuples) = (unsafe { self.vector_iter() }) else {
+                unreachable!()
+            };
 
-            // TODO: Change this when Polonius is stable. See: https://blog.rust-lang.org/2022/08/05/nll-by-default.html
-            let subtries_unneccessary = self.schematic.len() == 1 && map.is_none();
+            return Either::Left(tuples.map(Cow::Owned));
+        }
 
-            if subtries_unneccessary {
-                // SAFTEY: We assume storage isn't already borrowed
-                let Some(tuples) = (unsafe { self.vector_iter() }) else {
-                    unreachable!()
-                };
+        // SAFTEY: We assume storage isn't already borrowed. When `map` is `Some`, `force` is a
+        // no-op
+        unsafe { self.force() };
 
-                break 'a Box::new(tuples.map(Cow::Owned));
-            }
-
-            // SAFTEY: We assume storage isn't already borrowed. When `map` is `Some`, `force` is a
-            // no-op
-            unsafe { self.force() };
-
-            break 'a Box::new(map.unwrap().keys().map(Cow::Borrowed));
-        };
-
-        iterator
+        Either::Right(map.unwrap().keys().map(Cow::Borrowed))
     }
 }
