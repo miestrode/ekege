@@ -42,8 +42,13 @@ impl Database {
         *self.term_type_table.get(term_id)
     }
 
-    fn insert_map_member(&mut self, map_id: MapId, term_tuple: TermTuple) -> TermId {
-        let map = &self.maps[map_id.0];
+    fn insert_map_member(
+        maps: &[Map],
+        term_type_table: &mut TermTable<TypeId>,
+        map_id: MapId,
+        term_tuple: TermTuple,
+    ) -> TermId {
+        let map = &maps[map_id.0];
 
         assert_eq!(
             map.signature.input_type_ids.len(),
@@ -56,19 +61,19 @@ impl Database {
                 .term_ids
                 .iter()
                 .zip(map.signature.input_type_ids.iter())
-                .all(|(argument, type_id)| self.type_id(*argument) == *type_id),
+                .all(|(argument, type_id)| *term_type_table.get(*argument) == *type_id),
             "mismatching types for map"
         );
 
         let type_id = map.signature.output_type_id;
 
-        let map = &mut self.maps[map_id.0];
+        let map = &maps[map_id.0];
 
-        if let Some(term_id) = map.old_map_terms.get(&term_tuple).copied() {
+        if let Some(term_id) = map.old_map_terms.get(&term_tuple) {
             return term_id;
         }
 
-        let term_id = self.term_type_table.insert_flat_term(type_id);
+        let term_id = term_type_table.insert_flat_term(type_id);
 
         map.old_map_terms.insert(term_tuple.clone(), term_id);
         map.new_map_terms.insert(term_tuple, term_id);
@@ -90,11 +95,16 @@ impl Database {
                 .collect(),
         };
 
-        self.insert_map_member(term.map_id, term_tuple)
+        Self::insert_map_member(
+            &self.maps,
+            &mut self.term_type_table,
+            term.map_id,
+            term_tuple,
+        )
     }
 
     fn map_member_term_id(&self, map_id: MapId, map_member: TermTuple) -> Option<TermId> {
-        self.maps[map_id.0].old_map_terms.get(&map_member).copied()
+        self.maps[map_id.0].old_map_terms.get(&map_member)
     }
 
     pub fn term_id(&self, term: &TreeTerm) -> Option<TermId> {
@@ -116,7 +126,9 @@ impl Database {
     pub fn new_constant(&mut self, type_id: TypeId) -> TermId {
         let const_map = self.new_map(map_signature! { () -> type_id });
 
-        self.insert_map_member(
+        Self::insert_map_member(
+            &self.maps,
+            &mut self.term_type_table,
             const_map,
             TermTuple {
                 term_ids: Vec::new(),
@@ -128,10 +140,10 @@ impl Database {
         colts: &mut BTreeMap<ColtId, ColtRef<'_, '_>>,
         query_plan_sections: &[QueryPlanSection],
         current_substitution: &mut BTreeMap<QueryVariable, TermId>,
-        substitutions: &mut Vec<BTreeMap<QueryVariable, TermId>>,
+        callback: &mut impl for<'a> FnMut(&'a BTreeMap<QueryVariable, TermId>),
     ) {
         if query_plan_sections.is_empty() {
-            substitutions.push(current_substitution.clone());
+            callback(current_substitution);
         } else {
             let cover = colts[&query_plan_sections[0].sub_map_terms[0].colt_id].colt;
 
@@ -177,7 +189,7 @@ impl Database {
                     colts,
                     &query_plan_sections[1..],
                     current_substitution,
-                    substitutions,
+                    callback,
                 );
 
                 for &SubMapTerm { colt_id, .. } in sub_map_terms {
@@ -188,11 +200,10 @@ impl Database {
     }
 
     fn search(
-        &self,
+        maps: &[Map],
         executable_query_plan: &ExecutableQueryPlan,
-    ) -> Vec<BTreeMap<QueryVariable, TermId>> {
-        let mut substitutions = Vec::new();
-
+        callback: &mut impl for<'a> FnMut(&'a BTreeMap<QueryVariable, TermId>),
+    ) {
         let colts = executable_query_plan
             .colt_schematics
             .iter()
@@ -200,7 +211,7 @@ impl Database {
                 (
                     colt_id,
                     Colt::new(
-                        &self.maps[schematic.map_id.0],
+                        &maps[schematic.map_id.0],
                         &schematic.tuple_schematics,
                         schematic.new_terms_required,
                     ),
@@ -215,50 +226,57 @@ impl Database {
                 .collect(),
             &executable_query_plan.query_plan.sections,
             &mut BTreeMap::new(),
-            &mut substitutions,
+            callback,
         );
-
-        substitutions
     }
 
     fn clear_new_map_terms(&mut self) {
         for map in &mut self.maps {
-            map.new_map_terms.clear();
+            map.clear_new_map_terms();
+        }
+    }
+
+    fn set_pre_run_map_terms(&mut self) {
+        for map in &mut self.maps {
+            map.commit_pre_run_map_terms();
         }
     }
 
     pub(crate) fn run_rules_once(&mut self, rules: &[ExecutableFlatRule]) {
-        let rule_substitutions = rules
-            .iter()
-            .map(|rule| self.search(&rule.query_plan))
-            .collect::<Vec<_>>();
+        self.set_pre_run_map_terms();
 
-        self.clear_new_map_terms();
+        for rule in rules {
+            let mut rule_payload =
+                for<'a> |substitution: &'a BTreeMap<QueryVariable, TermId>| -> () {
+                    let mut created_terms = Vec::new();
 
-        let mut created_terms = Vec::new();
+                    for payload in rule.payloads {
+                        match payload {
+                            FlatRulePayload::Creation(term) => {
+                                let inputs = term.substitute(substitution, &created_terms);
 
-        for (rule, substitutions) in rules.iter().zip(rule_substitutions) {
-            for substitution in substitutions {
-                for payload in rule.payloads {
-                    match payload {
-                        FlatRulePayload::Creation(term) => {
-                            let inputs = term.substitute(&substitution, &created_terms);
-
-                            created_terms.push(self.insert_map_member(term.map_id, inputs));
-                        }
-                        FlatRulePayload::Union(_argument_a, _argument_b) => {
-                            todo!("unification")
-                            // self.unify(
-                            //     argument_a.substitute(&substitution, &created_terms),
-                            //     argument_b.substitute(&substitution, &created_terms),
-                            // );
+                                created_terms.push(Self::insert_map_member(
+                                    &self.maps,
+                                    &mut self.term_type_table,
+                                    term.map_id,
+                                    inputs,
+                                ));
+                            }
+                            FlatRulePayload::Union(_argument_a, _argument_b) => {
+                                todo!("unification")
+                                // self.unify(
+                                //     argument_a.substitute(&substitution, &created_terms),
+                                //     argument_b.substitute(&substitution, &created_terms),
+                                // );
+                            }
                         }
                     }
-                }
+                };
 
-                created_terms.clear();
-            }
+            Self::search(&self.maps, &rule.query_plan, &mut rule_payload);
         }
+
+        self.clear_new_map_terms();
     }
 }
 

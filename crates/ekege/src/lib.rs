@@ -1,3 +1,5 @@
+#![feature(closure_lifetime_binder)]
+
 extern crate self as ekege;
 
 mod colt;

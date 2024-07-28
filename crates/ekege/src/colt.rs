@@ -2,13 +2,13 @@ use std::{
     borrow::Cow,
     cell::UnsafeCell,
     collections::{BTreeMap, HashMap},
+    ops::Range,
 };
 
 use either::Either;
-use indexmap::IndexMap;
 
 use crate::{
-    map::Map,
+    map::{Map, MapTerms},
     plan::{SchematicAtom, SchematicAtomInner},
     rule::QueryVariable,
     term::TermId,
@@ -22,6 +22,22 @@ impl<T: ?Sized, U> Captures<U> for T {}
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct TermTuple {
     pub(crate) term_ids: Vec<TermId>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SeparatedMapTerm<'a> {
+    pub(crate) member: &'a [TermId],
+    pub(crate) term_id: TermId,
+}
+
+impl<'a> SeparatedMapTerm<'a> {
+    fn get(&self, index: usize) -> TermId {
+        if index == self.member.len() {
+            self.term_id
+        } else {
+            self.member[index]
+        }
+    }
 }
 
 struct TupleSchematic {
@@ -54,13 +70,16 @@ fn tuple_schematic(atoms: &[SchematicAtom]) -> TupleSchematic {
 
 // Given a tuple and a schematic, is that tuple valid?
 // For example, for schematic (0: X, 1: Y, 2: X) and tuple (3, 4, 5), the tuple is invalid, as 3 != 5
-fn is_valid<'a>(map_term: &TermTuple, mut requirements: impl Iterator<Item = &'a [usize]>) -> bool {
+fn is_valid<'a>(
+    separated_map_term: SeparatedMapTerm<'_>,
+    mut requirements: impl Iterator<Item = &'a [usize]>,
+) -> bool {
     requirements.all(|indices| {
-        let first_term_id = map_term.term_ids[indices[0]];
+        let first_term_id = separated_map_term.get(indices[0]);
 
         indices[1..]
             .iter()
-            .map(|&index| map_term.term_ids[index])
+            .map(|&index| separated_map_term.get(index))
             .all(|term_id| term_id == first_term_id)
     })
 }
@@ -68,12 +87,12 @@ fn is_valid<'a>(map_term: &TermTuple, mut requirements: impl Iterator<Item = &'a
 enum ColtStorage<'a> {
     Map(HashMap<TermTuple, Colt<'a>>),
     Vector(Vec<usize>),
-    FullVector,
+    FullVector(Range<usize>),
 }
 
 // TODO: No need to own all of this information
 pub(crate) struct Colt<'a> {
-    map: &'a IndexMap<TermTuple, TermId>,
+    map_terms: &'a MapTerms,
     schematic: &'a [&'a [SchematicAtom]],
     tuple_indices_and_requirements: TupleSchematic,
     storage: UnsafeCell<ColtStorage<'a>>,
@@ -91,15 +110,17 @@ impl<'a> Colt<'a> {
         schematic: &'a [&'a [SchematicAtom]],
         new_terms_required: bool,
     ) -> Self {
+        let map_terms = if new_terms_required {
+            &map.new_map_terms
+        } else {
+            &map.old_map_terms
+        };
+
         Self {
-            map: if new_terms_required {
-                &map.new_map_terms
-            } else {
-                &map.old_map_terms
-            },
+            map_terms,
             tuple_indices_and_requirements: tuple_schematic(schematic[0]),
             schematic,
-            storage: UnsafeCell::new(ColtStorage::FullVector),
+            storage: UnsafeCell::new(ColtStorage::FullVector(0..map_terms.pre_run_len)),
         }
     }
 
@@ -132,14 +153,14 @@ impl<'a> Colt<'a> {
         // SAFTEY: We assume storage isn't already mutably borrowed
         match unsafe { self.storage() } {
             ColtStorage::Map(map) => Some(map),
-            ColtStorage::Vector(_) | ColtStorage::FullVector => None,
+            ColtStorage::Vector(_) | ColtStorage::FullVector(_) => None,
         }
     }
 
     fn vector_mut(&mut self) -> Option<&mut Vec<usize>> {
         match self.storage.get_mut() {
             ColtStorage::Vector(vector) => Some(vector),
-            ColtStorage::Map(_) | ColtStorage::FullVector => None,
+            ColtStorage::Map(_) | ColtStorage::FullVector(_) => None,
         }
     }
 
@@ -149,7 +170,7 @@ impl<'a> Colt<'a> {
         for (tuple_index, tuple) in tuples.enumerate() {
             map.entry(tuple)
                 .or_insert(Colt {
-                    map: self.map,
+                    map_terms: self.map_terms,
                     schematic: &self.schematic[1..],
                     tuple_indices_and_requirements: tuple_schematic(
                         self.schematic.get(1).unwrap_or(&Vec::new().as_slice()),
@@ -170,36 +191,26 @@ impl<'a> Colt<'a> {
     ) -> Option<impl Iterator<Item = TermTuple> + Captures<(&'a (), &'b ())>> {
         // SAFTEY: We assume storage isn't already mutably borrowed
         let colt_storage = unsafe { self.storage() };
+        let index_iterator = match colt_storage {
+            ColtStorage::Vector(vector) => Either::Left(vector.iter().copied()),
+            ColtStorage::FullVector(range) => Either::Right(range.clone()),
+            _ => return None,
+        };
 
         Some(
-            (if let ColtStorage::Vector(vector) = colt_storage {
-                Either::Left(
-                    vector
-                        .iter()
+            index_iterator
+                .map(|index| self.map_terms.get_by_index(index).unwrap())
+                .filter(|&separated_map_term| {
+                    is_valid(separated_map_term, self.tuple_requirements())
+                })
+                .map(|separated_map_term| TermTuple {
+                    term_ids: self
+                        .tuple_indices()
+                        .values()
                         .copied()
-                        .map(|tuple_index| self.map.get_index(tuple_index).unwrap()),
-                )
-            } else if let ColtStorage::FullVector = colt_storage {
-                Either::Right(self.map.iter())
-            } else {
-                return None;
-            })
-            .map(|(term_tuple, id)| {
-                let mut term_tuple = term_tuple.clone();
-
-                term_tuple.term_ids.push(*id);
-
-                term_tuple
-            })
-            .filter(|term_tuple| is_valid(term_tuple, self.tuple_requirements()))
-            .map(|tuple| TermTuple {
-                term_ids: self
-                    .tuple_indices()
-                    .values()
-                    .copied()
-                    .map(|tuple_index| tuple.term_ids[tuple_index])
-                    .collect(),
-            }),
+                        .map(|tuple_index| separated_map_term.get(tuple_index))
+                        .collect(),
+                }),
         )
     }
 
