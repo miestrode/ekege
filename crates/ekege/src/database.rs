@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Instant};
 
+use either::Either;
 use ekege_macros::map_signature;
 
 use crate::{
@@ -148,52 +149,106 @@ impl Database {
             let cover = colts[&query_plan_sections[0].sub_map_terms[0].colt_id].colt;
 
             // SAFETY: As shown below, `cover` won't be changed while it is being iterated, making `get` and `iter` safe
-            'tuple_attempt: for tuple in unsafe { cover.iter() } {
-                current_substitution.extend(
-                    cover
-                        .tuple_indices()
-                        .keys()
-                        .copied()
-                        .zip(tuple.term_ids.iter().copied()),
-                );
+            let iter = unsafe { cover.iter() };
 
-                let sub_map_terms = &query_plan_sections[0].sub_map_terms
-                    [if query_plan_sections.len() == 1 { 1 } else { 0 }..];
+            match iter {
+                Either::Left(separated_map_terms) => {
+                    'tuple_attempt: for separated_map_term in separated_map_terms {
+                        current_substitution.extend(
+                            cover.tuple_indices().iter().map(|(variable, index)| {
+                                (*variable, separated_map_term.get(*index))
+                            }),
+                        );
 
-                for &SubMapTerm { colt_id, .. } in sub_map_terms {
-                    let colt_ref = &colts[&colt_id];
-                    let colt = colt_ref.colt;
+                        let sub_map_terms = &query_plan_sections[0].sub_map_terms
+                            [if query_plan_sections.len() == 1 { 1 } else { 0 }..];
 
-                    let subtuple = TermTuple {
-                        term_ids: colt
-                            .tuple_indices()
-                            .keys()
-                            .map(|variable| current_substitution[variable])
-                            .collect(),
-                    };
+                        for &SubMapTerm { colt_id, .. } in sub_map_terms {
+                            let colt_ref = &colts[&colt_id];
+                            let colt = colt_ref.colt;
 
-                    // SAFETY: When this is the final section of the plan, we ignore the first COLT
-                    // explicitly, as `new_colts` won't be used. Otherwise, this isn't the last section,
-                    // and thus forcing must've already happened in `iter()`, and this internal `force()`
-                    // is a no-op
-                    if let Some(subcolt) =
-                        unsafe { colt.get(&subtuple, Some(Box::new(colt_ref.clone()))) }
-                    {
-                        colts.insert(colt_id, subcolt);
-                    } else {
-                        continue 'tuple_attempt;
+                            let subtuple = TermTuple {
+                                term_ids: colt
+                                    .tuple_indices()
+                                    .keys()
+                                    .map(|variable| current_substitution[variable])
+                                    .collect(),
+                            };
+
+                            // SAFETY: When this is the final section of the plan, we ignore the first COLT
+                            // explicitly, as `new_colts` won't be used. Otherwise, this isn't the last section,
+                            // and thus forcing must've already happened in `iter()`, and this internal `force()`
+                            // is a no-op
+                            if let Some(subcolt) =
+                                unsafe { colt.get(&subtuple, Some(Box::new(colt_ref.clone()))) }
+                            {
+                                colts.insert(colt_id, subcolt);
+                            } else {
+                                continue 'tuple_attempt;
+                            }
+                        }
+
+                        Self::search_inner(
+                            colts,
+                            &query_plan_sections[1..],
+                            current_substitution,
+                            callback,
+                        );
+
+                        for &SubMapTerm { colt_id, .. } in sub_map_terms {
+                            colts.insert(colt_id, *colts[&colt_id].parent.clone().unwrap());
+                        }
                     }
                 }
+                Either::Right(tuples) => {
+                    'tuple_attempt: for tuple in tuples {
+                        current_substitution.extend(
+                            cover
+                                .tuple_indices()
+                                .keys()
+                                .copied()
+                                .zip(tuple.term_ids.iter().copied()),
+                        );
 
-                Self::search_inner(
-                    colts,
-                    &query_plan_sections[1..],
-                    current_substitution,
-                    callback,
-                );
+                        let sub_map_terms = &query_plan_sections[0].sub_map_terms
+                            [if query_plan_sections.len() == 1 { 1 } else { 0 }..];
 
-                for &SubMapTerm { colt_id, .. } in sub_map_terms {
-                    colts.insert(colt_id, *colts[&colt_id].parent.clone().unwrap());
+                        for &SubMapTerm { colt_id, .. } in sub_map_terms {
+                            let colt_ref = &colts[&colt_id];
+                            let colt = colt_ref.colt;
+
+                            let subtuple = TermTuple {
+                                term_ids: colt
+                                    .tuple_indices()
+                                    .keys()
+                                    .map(|variable| current_substitution[variable])
+                                    .collect(),
+                            };
+
+                            // SAFETY: When this is the final section of the plan, we ignore the first COLT
+                            // explicitly, as `new_colts` won't be used. Otherwise, this isn't the last section,
+                            // and thus forcing must've already happened in `iter()`, and this internal `force()`
+                            // is a no-op
+                            if let Some(subcolt) =
+                                unsafe { colt.get(&subtuple, Some(Box::new(colt_ref.clone()))) }
+                            {
+                                colts.insert(colt_id, subcolt);
+                            } else {
+                                continue 'tuple_attempt;
+                            }
+                        }
+
+                        Self::search_inner(
+                            colts,
+                            &query_plan_sections[1..],
+                            current_substitution,
+                            callback,
+                        );
+
+                        for &SubMapTerm { colt_id, .. } in sub_map_terms {
+                            colts.insert(colt_id, *colts[&colt_id].parent.clone().unwrap());
+                        }
+                    }
                 }
             }
         }
@@ -243,6 +298,8 @@ impl Database {
     }
 
     pub(crate) fn run_rules_once(&mut self, rules: &[ExecutableFlatRule]) {
+        let instant = Instant::now();
+
         self.set_pre_run_map_terms();
 
         let mut created_terms = Vec::new();

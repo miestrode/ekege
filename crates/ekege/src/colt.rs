@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     cell::UnsafeCell,
     collections::{BTreeMap, HashMap},
     ops::Range,
@@ -31,7 +30,7 @@ pub(crate) struct SeparatedMapTerm<'a> {
 }
 
 impl<'a> SeparatedMapTerm<'a> {
-    fn get(&self, index: usize) -> TermId {
+    pub(crate) fn get(&self, index: usize) -> TermId {
         if index == self.member.len() {
             self.term_id
         } else {
@@ -164,22 +163,31 @@ impl<'a> Colt<'a> {
         }
     }
 
-    fn populate_map(&self, tuples: impl Iterator<Item = TermTuple>) -> HashMap<TermTuple, Self> {
+    fn populate_map(
+        &self,
+        map_terms: impl Iterator<Item = SeparatedMapTerm<'a>>,
+    ) -> HashMap<TermTuple, Self> {
         let mut map = HashMap::new();
 
-        for (tuple_index, tuple) in tuples.enumerate() {
-            map.entry(tuple)
-                .or_insert(Colt {
-                    map_terms: self.map_terms,
-                    schematic: &self.schematic[1..],
-                    tuple_indices_and_requirements: tuple_schematic(
-                        self.schematic.get(1).unwrap_or(&Vec::new().as_slice()),
-                    ),
-                    storage: UnsafeCell::new(ColtStorage::Vector(Vec::new())),
-                })
-                .vector_mut()
-                .unwrap()
-                .push(tuple_index)
+        for (index, map_term) in map_terms.enumerate() {
+            map.entry(TermTuple {
+                term_ids: self
+                    .tuple_indices()
+                    .values()
+                    .map(|index| map_term.get(*index))
+                    .collect(),
+            })
+            .or_insert(Colt {
+                map_terms: self.map_terms,
+                schematic: &self.schematic[1..],
+                tuple_indices_and_requirements: tuple_schematic(
+                    self.schematic.get(1).unwrap_or(&Vec::new().as_slice()),
+                ),
+                storage: UnsafeCell::new(ColtStorage::Vector(Vec::new())),
+            })
+            .vector_mut()
+            .unwrap()
+            .push(index)
         }
 
         map
@@ -188,7 +196,7 @@ impl<'a> Colt<'a> {
     // SAFETY: Caller must ensure storage isn't already mutably borrowed
     unsafe fn vector_iter<'b>(
         &'b self,
-    ) -> Option<impl Iterator<Item = TermTuple> + Captures<(&'a (), &'b ())>> {
+    ) -> Option<impl Iterator<Item = SeparatedMapTerm<'a>> + Captures<(&'a (), &'b ())>> {
         // SAFTEY: We assume storage isn't already mutably borrowed
         let colt_storage = unsafe { self.storage() };
         let index_iterator = match colt_storage {
@@ -202,14 +210,6 @@ impl<'a> Colt<'a> {
                 .map(|index| self.map_terms.get_by_index(index).unwrap())
                 .filter(|&separated_map_term| {
                     is_valid(separated_map_term, self.tuple_requirements())
-                })
-                .map(|separated_map_term| TermTuple {
-                    term_ids: self
-                        .tuple_indices()
-                        .values()
-                        .copied()
-                        .map(|tuple_index| separated_map_term.get(tuple_index))
-                        .collect(),
                 }),
         )
     }
@@ -243,7 +243,12 @@ impl<'a> Colt<'a> {
     }
 
     // SAFETY: Caller must ensure storage isn't already borrowed
-    pub(crate) unsafe fn iter(&self) -> impl Iterator<Item = Cow<TermTuple>> + Captures<&'a ()> {
+    pub(crate) unsafe fn iter<'b>(
+        &'b self,
+    ) -> Either<
+        impl Iterator<Item = SeparatedMapTerm<'a>> + Captures<&'b ()>,
+        impl Iterator<Item = &'b TermTuple> + Captures<&'a ()>,
+    > {
         // SAFTEY: We assume storage isn't already borrowed
         let map = unsafe { self.map() };
 
@@ -252,17 +257,17 @@ impl<'a> Colt<'a> {
 
         if subtries_unneccessary {
             // SAFTEY: We assume storage isn't already borrowed
-            let Some(tuples) = (unsafe { self.vector_iter() }) else {
+            let Some(separated_map_terms) = (unsafe { self.vector_iter() }) else {
                 unreachable!()
             };
 
-            return Either::Left(tuples.map(Cow::Owned));
+            return Either::Left(separated_map_terms);
         }
 
         // SAFTEY: We assume storage isn't already borrowed. When `map` is `Some`, `force` is a
         // no-op
         unsafe { self.force() };
 
-        Either::Right(map.unwrap().keys().map(Cow::Borrowed))
+        Either::Right(map.unwrap().keys())
     }
 }
