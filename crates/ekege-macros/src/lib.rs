@@ -41,7 +41,7 @@ pub(crate) static CRATE_ROOT: CrateRoot = CrateRoot {
 };
 
 #[proc_macro]
-pub fn tree_term(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
+pub fn term(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(tokens as TreeTerm);
 
     proc_macro::TokenStream::from(input.to_token_stream())

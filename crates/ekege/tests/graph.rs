@@ -1,5 +1,4 @@
-use ekege::{database::Database, domain::Domain, map::map_signature, rule::rule, term::tree_term};
-
+use ekege::{database::Database, domain::Domain, map::map_signature, rule::rule, term::term};
 use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 
 const GRAPH_SIZE: usize = 100;
@@ -31,8 +30,8 @@ fn test_graph() {
         let new_node = database.new_constant(node);
         let other_node = *nodes.choose(&mut rng).unwrap();
 
-        database.new_tree_term(&tree_term! { edge(new_node, other_node) });
-        database.new_tree_term(&tree_term! { edge(other_node, new_node) });
+        database.new_term(&term! { edge(new_node, other_node) });
+        database.new_term(&term! { edge(other_node, new_node) });
 
         nodes.push(new_node);
     }
@@ -41,8 +40,8 @@ fn test_graph() {
         let node_a = *nodes.choose(&mut rng).unwrap();
         let node_b = *nodes.choose(&mut rng).unwrap();
 
-        database.new_tree_term(&tree_term! { edge(node_a, node_b) });
-        database.new_tree_term(&tree_term! { edge(node_b, node_a) });
+        database.new_term(&term! { edge(node_a, node_b) });
+        database.new_term(&term! { edge(node_b, node_a) });
     }
 
     let mut domain = Domain::new(database, rules);
@@ -54,12 +53,12 @@ fn test_graph() {
 
         assert!(domain
             .database
-            .term_id(&tree_term! { path(first_node, second_node) })
+            .term_id(&term! { path(first_node, second_node) })
             .is_some());
 
         assert!(domain
             .database
-            .term_id(&tree_term! { path(second_node, first_node) })
+            .term_id(&term! { path(second_node, first_node) })
             .is_some());
     }
 }

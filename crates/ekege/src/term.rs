@@ -3,7 +3,7 @@ use std::{
     ops::{Index, IndexMut},
 };
 
-pub use ekege_macros::tree_term;
+pub use ekege_macros::term;
 
 use crate::{id::Id, map::MapId};
 

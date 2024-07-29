@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use ekege::{database::Database, domain::Domain, map::map_signature, rule::rule, term::tree_term};
+use ekege::{database::Database, domain::Domain, map::map_signature, rule::rule, term::term};
 use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
 
 const GRAPH_SIZE: usize = 100;
@@ -30,8 +30,8 @@ fn generate_random_graph(size: NonZeroUsize, maximum_cycles: usize, rng: &mut im
         let new_node = database.new_constant(node);
         let other_node = *nodes.choose(rng).unwrap();
 
-        database.new_tree_term(&tree_term! { edge(new_node, other_node) });
-        database.new_tree_term(&tree_term! { edge(other_node, new_node) });
+        database.new_term(&term! { edge(new_node, other_node) });
+        database.new_term(&term! { edge(other_node, new_node) });
 
         nodes.push(new_node);
     }
@@ -40,8 +40,8 @@ fn generate_random_graph(size: NonZeroUsize, maximum_cycles: usize, rng: &mut im
         let node_a = *nodes.choose(rng).unwrap();
         let node_b = *nodes.choose(rng).unwrap();
 
-        database.new_tree_term(&tree_term! { edge(node_a, node_b) });
-        database.new_tree_term(&tree_term! { edge(node_b, node_a) });
+        database.new_term(&term! { edge(node_a, node_b) });
+        database.new_term(&term! { edge(node_b, node_a) });
     }
 
     Domain::new(database, rules)

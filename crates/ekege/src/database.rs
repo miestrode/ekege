@@ -82,13 +82,13 @@ impl Database {
         term_id
     }
 
-    pub fn new_tree_term(&mut self, term: &TreeTerm) -> TermId {
+    pub fn new_term(&mut self, term: &TreeTerm) -> TermId {
         let term_tuple = TermTuple {
             term_ids: term
                 .inputs
                 .iter()
                 .map(|input| match input {
-                    TreeTermInput::TreeTerm(term) => self.new_tree_term(term),
+                    TreeTermInput::TreeTerm(term) => self.new_term(term),
                     TreeTermInput::TermId(term_id) => {
                         self.term_type_table.canonicalize_immutable(*term_id)
                     }
