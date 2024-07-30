@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, time::Instant};
+use std::collections::BTreeMap;
 
 use either::Either;
 use ekege_macros::map_signature;
@@ -298,8 +298,6 @@ impl Database {
     }
 
     pub(crate) fn run_rules_once(&mut self, rules: &[ExecutableFlatRule]) {
-        let instant = Instant::now();
-
         self.set_pre_run_map_terms();
 
         let mut created_terms = Vec::new();
