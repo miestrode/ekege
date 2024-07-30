@@ -6,7 +6,7 @@
     <hr/>
 </div>
 
-Ekege is an E-graph library for Rust. Essentially, a simpler version of [Egglog](https://github.com/egraphs-good/egglog), without built-in types and merges. Every single term evaluates to a "term ID", which identifies unique terms, up to equivalence, or as it is referred to in the library, unification.
+Ekege is an E-graph library for Rust. Essentially, a simpler version of [Egglog](https://github.com/egraphs-good/egglog), without built-in types and merges. Every single term evaluates to a "term ID", which identifies unique terms, up to equivalence, or as it is referred to in the library, unification. See [this](JARGON.md) for a bit more project-specific information, and read [the Egglog paper](https://doi.org/10.1145/3591239) for information on Egglog (the language), which is a superset of what Ekege as a library offers.
 
 ## Special thanks
 
@@ -53,7 +53,7 @@ assert!(graph.database.term_id(&term! { path(a, d) }).is_some());
 
 Ekege doesn't have any built-in data types, but yet we can still represent many data structures, by use of user-defined, uninterpreted data types. Ekege's term-centric nature does make this slightly different than Datalog, but this is by design: Ekege is strictly more general.
 
-## Installation 
+## Installation
 
 Once Ekege is more feature complete, it will be available on crates.io. Nevertheless, Ekege requires no external dependencies.
 
