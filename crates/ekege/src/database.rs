@@ -4,7 +4,7 @@ use either::Either;
 use ekege_macros::map_signature;
 
 use crate::{
-    colt::{Captures, Colt, ColtRef, TermTuple},
+    colt::{Colt, ColtRef, TermTuple},
     id::{Id, IdGenerator},
     map::{Map, MapId, MapSignature, TypeId},
     plan::{ColtId, ExecutableQueryPlan, QueryPlanSection, SubMapTerm},
@@ -141,7 +141,7 @@ impl Database {
         colts: &mut BTreeMap<ColtId, ColtRef<'_, '_>>,
         query_plan_sections: &[QueryPlanSection],
         current_substitution: &mut BTreeMap<QueryVariable, TermId>,
-        callback: &mut impl for<'a> FnMut(&'a BTreeMap<QueryVariable, TermId>),
+        callback: &mut impl FnMut(&BTreeMap<QueryVariable, TermId>),
     ) {
         if query_plan_sections.is_empty() {
             callback(current_substitution);
@@ -257,7 +257,7 @@ impl Database {
     fn search(
         maps: &[Map],
         executable_query_plan: &ExecutableQueryPlan,
-        callback: &mut impl for<'a> FnMut(&'a BTreeMap<QueryVariable, TermId>),
+        callback: &mut impl FnMut(&BTreeMap<QueryVariable, TermId>),
     ) {
         let colts = executable_query_plan
             .colt_schematics
@@ -303,52 +303,31 @@ impl Database {
         let mut created_terms = Vec::new();
 
         for rule in rules {
-            // This is a big hack to allow for making the lifetime of the substitution universally
-            // quantifiable, to use with the HRTB in `Database::search_inner`. For more details,
-            // see: https://github.com/rust-lang/rust/issues/97362
-            fn create_rule_payload_callback<'a>(
-                maps: &'a [Map],
-                term_type_table: &'a mut TermTable<TypeId>,
-                created_terms: &'a mut Vec<TermId>,
-                rule: &'a ExecutableFlatRule,
-            ) -> impl FnMut(&BTreeMap<QueryVariable, TermId>) + Captures<&'a ()> {
-                |substitution| {
-                    for payload in rule.payloads {
-                        match payload {
-                            FlatRulePayload::Creation(term) => {
-                                let inputs = term.substitute(substitution, created_terms);
+            Self::search(&self.maps, &rule.query_plan, &mut |substitution| {
+                for payload in rule.payloads {
+                    match payload {
+                        FlatRulePayload::Creation(term) => {
+                            let inputs = term.substitute(substitution, &created_terms);
 
-                                created_terms.push(Database::insert_map_member(
-                                    maps,
-                                    term_type_table,
-                                    term.map_id,
-                                    inputs,
-                                ));
-                            }
-                            FlatRulePayload::Union(_argument_a, _argument_b) => {
-                                todo!("unification")
-                                // self.unify(
-                                //     argument_a.substitute(&substitution, &created_terms),
-                                //     argument_b.substitute(&substitution, &created_terms),
-                                // );
-                            }
+                            created_terms.push(Database::insert_map_member(
+                                &self.maps,
+                                &mut self.term_type_table,
+                                term.map_id,
+                                inputs,
+                            ));
+                        }
+                        FlatRulePayload::Union(_argument_a, _argument_b) => {
+                            todo!("unification")
+                            // self.unify(
+                            //     argument_a.substitute(&substitution, &created_terms),
+                            //     argument_b.substitute(&substitution, &created_terms),
+                            // );
                         }
                     }
-
-                    created_terms.clear();
                 }
-            }
 
-            Self::search(
-                &self.maps,
-                &rule.query_plan,
-                &mut create_rule_payload_callback(
-                    &self.maps,
-                    &mut self.term_type_table,
-                    &mut created_terms,
-                    rule,
-                ),
-            );
+                created_terms.clear();
+            });
         }
 
         self.clear_new_map_terms();
