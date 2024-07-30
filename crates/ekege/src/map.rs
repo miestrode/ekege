@@ -1,13 +1,18 @@
 use std::{cell::UnsafeCell, ops::Deref};
 
 pub use ekege_macros::map_signature;
+#[allow(clippy::disallowed_types)]
 use indexmap::IndexMap;
+use rustc_hash::FxBuildHasher;
 
 use crate::{
     colt::{SeparatedMapTerm, TermTuple},
     id::Id,
     term::TermId,
 };
+
+#[allow(clippy::disallowed_types)]
+type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
 
 pub type TypeId = Id;
 pub type MapId = Id;
@@ -19,14 +24,14 @@ pub struct MapSignature {
 }
 
 pub(crate) struct MapTerms {
-    map_terms: UnsafeCell<IndexMap<TermTuple, TermId>>,
+    map_terms: UnsafeCell<FxIndexMap<TermTuple, TermId>>,
     pub(crate) pre_run_len: usize,
 }
 
 impl MapTerms {
     pub(crate) fn new() -> Self {
         Self {
-            map_terms: UnsafeCell::new(IndexMap::new()),
+            map_terms: UnsafeCell::new(FxIndexMap::default()),
             pre_run_len: 0,
         }
     }

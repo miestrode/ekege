@@ -1,10 +1,7 @@
-use std::{
-    cell::UnsafeCell,
-    collections::{BTreeMap, HashMap},
-    ops::Range,
-};
+use std::{cell::UnsafeCell, collections::BTreeMap, ops::Range};
 
 use either::Either;
+use rustc_hash::FxHashMap;
 
 use crate::{
     map::{Map, MapTerms},
@@ -84,7 +81,7 @@ fn is_valid<'a>(
 }
 
 enum ColtStorage<'a> {
-    Map(HashMap<TermTuple, Colt<'a>>),
+    Map(FxHashMap<TermTuple, Colt<'a>>),
     Vector(Vec<usize>),
     FullVector(Range<usize>),
 }
@@ -148,7 +145,7 @@ impl<'a> Colt<'a> {
     }
 
     // SAFETY: Caller must ensure storage isn't already mutably borrowed
-    unsafe fn map(&self) -> Option<&HashMap<TermTuple, Self>> {
+    unsafe fn map(&self) -> Option<&FxHashMap<TermTuple, Self>> {
         // SAFTEY: We assume storage isn't already mutably borrowed
         match unsafe { self.storage() } {
             ColtStorage::Map(map) => Some(map),
@@ -166,8 +163,8 @@ impl<'a> Colt<'a> {
     fn populate_map(
         &self,
         map_terms: impl Iterator<Item = SeparatedMapTerm<'a>>,
-    ) -> HashMap<TermTuple, Self> {
-        let mut map = HashMap::new();
+    ) -> FxHashMap<TermTuple, Self> {
+        let mut map = FxHashMap::default();
 
         for (index, map_term) in map_terms.enumerate() {
             map.entry(TermTuple {

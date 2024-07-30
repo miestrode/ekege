@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use proc_macro2::Span;
 use quote::{quote, ToTokens, TokenStreamExt};
@@ -26,14 +26,14 @@ type QueryVariable = Id;
 
 struct QueryVariableTable {
     variables: usize,
-    name_variable_table: HashMap<String, QueryVariable>,
+    name_variable_table: BTreeMap<String, QueryVariable>,
 }
 
 impl QueryVariableTable {
     fn new() -> Self {
         Self {
             variables: 0,
-            name_variable_table: HashMap::new(),
+            name_variable_table: BTreeMap::new(),
         }
     }
 }

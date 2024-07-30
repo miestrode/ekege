@@ -10,6 +10,7 @@ ekege-macros.workspace = true
 
 indexmap.workspace = true
 either.workspace = true
+rustc-hash.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
