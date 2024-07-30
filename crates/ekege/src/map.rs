@@ -1,6 +1,10 @@
-use std::{cell::UnsafeCell, ops::Deref};
+use std::{
+    cell::UnsafeCell,
+    ops::{Deref, Range},
+};
 
 pub use ekege_macros::map_signature;
+use indexmap::map::Entry;
 #[allow(clippy::disallowed_types)]
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
@@ -25,14 +29,14 @@ pub struct MapSignature {
 
 pub(crate) struct MapTerms {
     map_terms: UnsafeCell<FxIndexMap<TermTuple, TermId>>,
-    pub(crate) pre_run_len: usize,
+    pub(crate) pre_run_new_map_terms_range: Range<usize>,
 }
 
 impl MapTerms {
     pub(crate) fn new() -> Self {
         Self {
             map_terms: UnsafeCell::new(FxIndexMap::default()),
-            pre_run_len: 0,
+            pre_run_new_map_terms_range: 0..0,
         }
     }
 
@@ -57,41 +61,42 @@ impl MapTerms {
         unsafe { &*self.map_terms.get() }.get(term_tuple).copied()
     }
 
-    pub(crate) fn insert(&self, term_tuple: TermTuple, term_id: TermId) {
-        // SAFETY: This doesn't cause anything to be dropped
-        unsafe { &mut *self.map_terms.get() }.insert(term_tuple, term_id);
+    pub(crate) fn entry(&self, term_tuple: TermTuple) -> Entry<'_, TermTuple, TermId> {
+        // SAFETY: Due to construction, no reference will be invalidated
+        unsafe { &mut *self.map_terms.get() }.entry(term_tuple)
     }
 
-    pub(crate) fn clear_old_map_terms(&mut self) {
-        self.map_terms.get_mut().drain(0..self.pre_run_len);
+    pub(crate) fn reinsert(
+        &mut self,
+        map: impl FnOnce(TermTuple) -> TermTuple,
+        index: usize,
+    ) -> Result<Option<TermId>, ()> {
+        let map_terms = &mut self.map_terms.get_mut();
+
+        let (term_tuple, term_id) = map_terms.swap_remove_index(index).ok_or(())?;
+
+        Ok(map_terms.insert(map(term_tuple), term_id))
     }
 
-    fn commit_pre_run_len(&mut self) {
-        self.pre_run_len = self.len();
+    pub(crate) fn start_pre_run_new_map_terms(&mut self) {
+        self.pre_run_new_map_terms_range.start = self.pre_run_new_map_terms_range.end;
+    }
+
+    pub(crate) fn end_pre_run_new_map_terms(&mut self) {
+        self.pre_run_new_map_terms_range.end = self.len();
     }
 }
 
 pub struct Map {
-    pub(crate) old_map_terms: MapTerms,
-    pub(crate) new_map_terms: MapTerms,
+    pub(crate) map_terms: MapTerms,
     pub(crate) signature: MapSignature,
 }
 
 impl Map {
     pub(crate) fn new(signature: MapSignature) -> Self {
         Self {
-            old_map_terms: MapTerms::new(),
-            new_map_terms: MapTerms::new(),
+            map_terms: MapTerms::new(),
             signature,
         }
-    }
-
-    pub(crate) fn commit_pre_run_map_terms(&mut self) {
-        self.old_map_terms.commit_pre_run_len();
-        self.new_map_terms.commit_pre_run_len();
-    }
-
-    pub(crate) fn clear_new_map_terms(&mut self) {
-        self.new_map_terms.clear_old_map_terms();
     }
 }

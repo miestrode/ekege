@@ -88,14 +88,6 @@ impl<T> TermTable<T> {
         term_id
     }
 
-    pub(crate) fn canonicalize_immutable(&self, mut term_id: TermId) -> TermId {
-        while let Some(parent_id) = self.parent_term_id(term_id) {
-            term_id = parent_id;
-        }
-
-        term_id
-    }
-
     pub(crate) fn unify(&mut self, term_id_a: TermId, term_id_b: TermId) -> TermId {
         let root_id_a = self.canonicalize(term_id_a);
         let root_id_b = self.canonicalize(term_id_b);

@@ -20,6 +20,16 @@ pub(crate) struct TermTuple {
     pub(crate) term_ids: Vec<TermId>,
 }
 
+impl TermTuple {
+    pub(crate) fn substitute(&mut self, substitution: &BTreeMap<TermId, TermId>) {
+        for term_id in &mut self.term_ids {
+            if let Some(new_term_id) = substitution.get(term_id) {
+                *term_id = *new_term_id
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct SeparatedMapTerm<'a> {
     pub(crate) member: &'a [TermId],
@@ -83,7 +93,7 @@ fn is_valid<'a>(
 enum ColtStorage<'a> {
     Map(FxHashMap<TermTuple, Colt<'a>>),
     Vector(Vec<usize>),
-    FullVector(Range<usize>),
+    MapTermsRange(Range<usize>),
 }
 
 // TODO: No need to own all of this information
@@ -106,17 +116,15 @@ impl<'a> Colt<'a> {
         schematic: &'a [&'a [SchematicAtom]],
         new_terms_required: bool,
     ) -> Self {
-        let map_terms = if new_terms_required {
-            &map.new_map_terms
-        } else {
-            &map.old_map_terms
-        };
-
         Self {
-            map_terms,
+            map_terms: &map.map_terms,
             tuple_indices_and_requirements: tuple_schematic(schematic[0]),
             schematic,
-            storage: UnsafeCell::new(ColtStorage::FullVector(0..map_terms.pre_run_len)),
+            storage: UnsafeCell::new(ColtStorage::MapTermsRange(if new_terms_required {
+                map.map_terms.pre_run_new_map_terms_range.clone()
+            } else {
+                0..map.map_terms.pre_run_new_map_terms_range.end
+            })),
         }
     }
 
@@ -149,14 +157,14 @@ impl<'a> Colt<'a> {
         // SAFTEY: We assume storage isn't already mutably borrowed
         match unsafe { self.storage() } {
             ColtStorage::Map(map) => Some(map),
-            ColtStorage::Vector(_) | ColtStorage::FullVector(_) => None,
+            ColtStorage::Vector(_) | ColtStorage::MapTermsRange(_) => None,
         }
     }
 
     fn vector_mut(&mut self) -> Option<&mut Vec<usize>> {
         match self.storage.get_mut() {
             ColtStorage::Vector(vector) => Some(vector),
-            ColtStorage::Map(_) | ColtStorage::FullVector(_) => None,
+            ColtStorage::Map(_) | ColtStorage::MapTermsRange(_) => None,
         }
     }
 
@@ -198,7 +206,7 @@ impl<'a> Colt<'a> {
         let colt_storage = unsafe { self.storage() };
         let index_iterator = match colt_storage {
             ColtStorage::Vector(vector) => Either::Left(vector.iter().copied()),
-            ColtStorage::FullVector(range) => Either::Right(range.clone()),
+            ColtStorage::MapTermsRange(range) => Either::Right(range.clone()),
             _ => return None,
         };
 

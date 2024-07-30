@@ -22,8 +22,7 @@ impl Domain {
 
         for _ in 0..times {
             self.database.run_rules_once(&executable_rules);
-            // self.database.rebuild();
-            // TODO: Rebuilding
+            self.database.rebuild();
         }
     }
 }
