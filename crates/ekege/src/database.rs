@@ -4,7 +4,7 @@ use either::Either;
 use ekege_macros::map_signature;
 
 use crate::{
-    colt::{Colt, ColtRef, TermTuple},
+    colt::{Captures, Colt, ColtRef, TermTuple},
     id::{Id, IdGenerator},
     map::{Map, MapId, MapSignature, TypeId},
     plan::{ColtId, ExecutableQueryPlan, QueryPlanSection, SubMapTerm},
@@ -303,16 +303,24 @@ impl Database {
         let mut created_terms = Vec::new();
 
         for rule in rules {
-            let mut rule_payload =
-                for<'a> |substitution: &'a BTreeMap<QueryVariable, TermId>| -> () {
+            // This is a big hack to allow for making the lifetime of the substitution universally
+            // quantifiable, to use with the HRTB in `Database::search_inner`. For more details,
+            // see: https://github.com/rust-lang/rust/issues/97362
+            fn create_rule_payload_callback<'a>(
+                maps: &'a [Map],
+                term_type_table: &'a mut TermTable<TypeId>,
+                created_terms: &'a mut Vec<TermId>,
+                rule: &'a ExecutableFlatRule,
+            ) -> impl FnMut(&BTreeMap<QueryVariable, TermId>) + Captures<&'a ()> {
+                |substitution| {
                     for payload in rule.payloads {
                         match payload {
                             FlatRulePayload::Creation(term) => {
-                                let inputs = term.substitute(substitution, &created_terms);
+                                let inputs = term.substitute(substitution, created_terms);
 
-                                created_terms.push(Self::insert_map_member(
-                                    &self.maps,
-                                    &mut self.term_type_table,
+                                created_terms.push(Database::insert_map_member(
+                                    maps,
+                                    term_type_table,
                                     term.map_id,
                                     inputs,
                                 ));
@@ -328,9 +336,19 @@ impl Database {
                     }
 
                     created_terms.clear();
-                };
+                }
+            }
 
-            Self::search(&self.maps, &rule.query_plan, &mut rule_payload);
+            Self::search(
+                &self.maps,
+                &rule.query_plan,
+                &mut create_rule_payload_callback(
+                    &self.maps,
+                    &mut self.term_type_table,
+                    &mut created_terms,
+                    rule,
+                ),
+            );
         }
 
         self.clear_new_map_terms();
