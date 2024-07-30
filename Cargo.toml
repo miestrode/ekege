@@ -6,7 +6,6 @@ resolver = "2"
 indexmap = "2.2.6"
 either = "1.13.0"
 rustc-hash = "2.0.0"
-bumpalo = "3.16.0"
 
 # Workspace members
 ekege = { path = "./crates/ekege/" }
