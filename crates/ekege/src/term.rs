@@ -1,9 +1,7 @@
-use std::{
-    collections::HashSet,
-    ops::{Index, IndexMut},
-};
+use std::ops::{Index, IndexMut};
 
 pub use ekege_macros::term;
+use rustc_hash::FxHashSet;
 
 use crate::{id::Id, map::MapId};
 
@@ -30,14 +28,14 @@ impl TreeTerm {
 #[derive(Debug)]
 pub(crate) struct Node<T> {
     parent_term_id: TermId,
-    size: usize,
+    rank: usize,
     value: T,
 }
 
 #[derive(Debug)]
 pub(crate) struct TermTable<T> {
     nodes: Vec<Node<T>>,
-    pub(crate) canonical_ids: HashSet<TermId>,
+    pub(crate) canonical_ids: FxHashSet<TermId>,
 }
 
 impl<T> Index<TermId> for TermTable<T> {
@@ -58,7 +56,7 @@ impl<T> TermTable<T> {
     pub(crate) fn new() -> Self {
         Self {
             nodes: vec![],
-            canonical_ids: HashSet::new(),
+            canonical_ids: FxHashSet::default(),
         }
     }
 
@@ -73,7 +71,7 @@ impl<T> TermTable<T> {
 
         self.nodes.push(Node {
             parent_term_id: term_id, // No parent so term id is self
-            size: 1,
+            rank: 0,
             value,
         });
 
@@ -102,7 +100,11 @@ impl<T> TermTable<T> {
         let root_id_a = self.canonicalize(term_id_a);
         let root_id_b = self.canonicalize(term_id_b);
 
-        let [larger_root_id, smaller_root_id] = if self[root_id_a].size > self[root_id_b].size {
+        if root_id_a == root_id_b {
+            return root_id_a;
+        }
+
+        let [larger_root_id, smaller_root_id] = if self[root_id_a].rank > self[root_id_b].rank {
             self.canonical_ids.remove(&root_id_b);
 
             [root_id_a, root_id_b]
@@ -113,7 +115,10 @@ impl<T> TermTable<T> {
         };
 
         self[smaller_root_id].parent_term_id = larger_root_id;
-        self[larger_root_id].size += self[smaller_root_id].size;
+
+        if self[root_id_a].rank == self[root_id_b].rank {
+            self[larger_root_id].rank += 1;
+        }
 
         larger_root_id
     }
