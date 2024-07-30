@@ -53,7 +53,7 @@ assert!(graph.database.term_id(&term! { path(a, d) }).is_some());
 
 Ekege doesn't have any built-in data types, but yet we can still represent many data structures, by use of user-defined, uninterpreted data types. Ekege's term-centric nature does make this slightly different than Datalog, but this is by design: Ekege is strictly more general.
 
-## Getting Ekege
+## Installation 
 
 Once Ekege is more feature complete, it will be available on crates.io. Nevertheless, Ekege requires no external dependencies.
 
