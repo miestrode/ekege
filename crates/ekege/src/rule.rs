@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 use crate::{
     colt::TermTuple,
+    database::Database,
     id::Id,
     map::MapId,
     plan::{ExecutableQueryPlan, QueryPlan},
@@ -19,6 +20,12 @@ pub enum FlatTermPatternInput {
 }
 
 impl FlatTermPatternInput {
+    fn canonicalize(&mut self, database: &mut Database) {
+        if let Self::TermId(term_id) = self {
+            *term_id = database.canonicalize(*term_id);
+        }
+    }
+
     pub(crate) fn substitute(
         &self,
         substitution: &BTreeMap<QueryVariable, TermId>,
@@ -39,6 +46,12 @@ pub struct FlatTermPattern {
 }
 
 impl FlatTermPattern {
+    fn canonicalize(&mut self, database: &mut Database) {
+        for input in &mut self.inputs {
+            input.canonicalize(database);
+        }
+    }
+
     pub(crate) fn substitute(
         &self,
         substitution: &BTreeMap<QueryVariable, TermId>,
@@ -60,7 +73,19 @@ pub enum FlatRulePayload {
     Union(FlatTermPatternInput, FlatTermPatternInput),
 }
 
-pub struct ExecutableFlatRule<'a> {
+impl FlatRulePayload {
+    fn canonicalize(&mut self, database: &mut Database) {
+        match self {
+            FlatRulePayload::Creation(term_pattern) => term_pattern.canonicalize(database),
+            FlatRulePayload::Union(term_pattern_input_a, term_pattern_input_b) => {
+                term_pattern_input_a.canonicalize(database);
+                term_pattern_input_b.canonicalize(database);
+            }
+        }
+    }
+}
+
+pub(crate) struct ExecutableFlatRule<'a> {
     pub(crate) query_plan: ExecutableQueryPlan<'a>,
     pub(crate) payloads: &'a [FlatRulePayload],
 }
@@ -72,7 +97,15 @@ pub struct FlatRule {
 }
 
 impl FlatRule {
-    pub fn to_executable(&self) -> ExecutableFlatRule {
+    pub(crate) fn canonicalize(&mut self, database: &mut Database) {
+        self.query_plan.canonicalize(database);
+
+        for payload in &mut self.payloads {
+            payload.canonicalize(database);
+        }
+    }
+
+    pub(crate) fn to_executable(&self) -> ExecutableFlatRule {
         ExecutableFlatRule {
             query_plan: self.query_plan.to_executable(),
             payloads: &self.payloads,

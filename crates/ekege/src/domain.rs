@@ -6,10 +6,17 @@ pub struct Domain {
 }
 
 impl Domain {
-    pub fn new(database: Database, rules: impl IntoIterator<Item = FlatRule>) -> Self {
+    pub fn new(mut database: Database, rules: impl IntoIterator<Item = FlatRule>) -> Self {
         Self {
+            rules: rules
+                .into_iter()
+                .map(|mut rule| {
+                    rule.canonicalize(&mut database);
+
+                    rule
+                })
+                .collect(),
             database,
-            rules: rules.into_iter().collect(),
         }
     }
 

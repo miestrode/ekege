@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::{id::Id, map::MapId, rule::QueryVariable, term::TermId};
+use crate::{database::Database, id::Id, map::MapId, rule::QueryVariable, term::TermId};
 
 pub(crate) type ColtId = Id;
 
@@ -10,10 +10,24 @@ pub enum SchematicAtomInner {
     TermId(TermId),
 }
 
+impl SchematicAtomInner {
+    fn canonicalize(&mut self, database: &mut Database) {
+        if let SchematicAtomInner::TermId(term_id) = self {
+            *term_id = database.canonicalize(*term_id)
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct SchematicAtom {
     pub tuple_index: usize,
     pub inner: SchematicAtomInner,
+}
+
+impl SchematicAtom {
+    fn canonicalize(&mut self, database: &mut Database) {
+        self.inner.canonicalize(database);
+    }
 }
 
 #[derive(Debug)]
@@ -24,9 +38,25 @@ pub struct SubMapTerm {
     pub atoms: Vec<SchematicAtom>,
 }
 
+impl SubMapTerm {
+    fn canonicalize(&mut self, database: &mut Database) {
+        for atom in &mut self.atoms {
+            atom.canonicalize(database);
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct QueryPlanSection {
     pub sub_map_terms: Vec<SubMapTerm>,
+}
+
+impl QueryPlanSection {
+    fn canonicalize(&mut self, database: &mut Database) {
+        for sub_map_term in &mut self.sub_map_terms {
+            sub_map_term.canonicalize(database);
+        }
+    }
 }
 
 pub(crate) struct ColtSchematic<'plan> {
@@ -35,7 +65,7 @@ pub(crate) struct ColtSchematic<'plan> {
     pub(crate) new_terms_required: bool,
 }
 
-pub struct ExecutableQueryPlan<'plan> {
+pub(crate) struct ExecutableQueryPlan<'plan> {
     pub(crate) colt_schematics: BTreeMap<ColtId, ColtSchematic<'plan>>,
     pub(crate) query_plan: &'plan QueryPlan,
 }
@@ -46,7 +76,13 @@ pub struct QueryPlan {
 }
 
 impl QueryPlan {
-    pub fn to_executable(&self) -> ExecutableQueryPlan {
+    pub(crate) fn canonicalize(&mut self, database: &mut Database) {
+        for section in &mut self.sections {
+            section.canonicalize(database);
+        }
+    }
+
+    pub(crate) fn to_executable(&self) -> ExecutableQueryPlan {
         let mut colt_schematics = BTreeMap::new();
 
         for section in &self.sections {
