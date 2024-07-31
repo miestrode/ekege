@@ -2,15 +2,19 @@
 name = "ekege"
 version = "0.1.0"
 edition = "2021"
-description = "An alternative egglog engine"
+description = "A different approach to an E-graph library"
 authors = ["Yoav Grimland <miestrode@proton.me>"]
 
 [dependencies]
+# Workspace members 
 ekege-macros.workspace = true
 
+# Regular dependencies
 indexmap.workspace = true
 either.workspace = true
 rustc-hash.workspace = true
+bumpalo.workspace = true
+hashbrown.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

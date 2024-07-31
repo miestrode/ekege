@@ -1,13 +1,13 @@
+use bumpalo::{collections::CollectIn, Bump};
 pub use ekege_macros::{equivalence, rewrite, rule};
 use std::collections::BTreeMap;
 
 use crate::{
-    colt::TermTuple,
     database::Database,
     id::Id,
     map::MapId,
     plan::{ExecutableQueryPlan, QueryPlan},
-    term::TermId,
+    term::{TermId, TermTuple},
 };
 
 pub type QueryVariable = Id;
@@ -56,15 +56,16 @@ impl FlatTermPattern {
 
     pub(crate) fn substitute(
         &self,
+        bump: &'static Bump,
         substitution: &BTreeMap<QueryVariable, TermId>,
         created_terms: &[TermId],
-    ) -> TermTuple {
+    ) -> TermTuple<'static> {
         TermTuple {
             term_ids: self
                 .inputs
                 .iter()
                 .map(|input| input.substitute(substitution, created_terms))
-                .collect(),
+                .collect_in(bump),
         }
     }
 }

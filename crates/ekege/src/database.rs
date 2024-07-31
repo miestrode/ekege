@@ -1,15 +1,16 @@
-use std::collections::BTreeMap;
+use std::{cell::UnsafeCell, collections::BTreeMap, ptr};
 
+use bumpalo::{collections::CollectIn, Bump};
 use either::Either;
 use ekege_macros::map_signature;
 
 use crate::{
-    colt::{Colt, ColtRef, TermTuple},
+    colt::{Colt, ColtRef},
     id::{Id, IdGenerator},
     map::{Map, MapId, MapSignature, MapTerms, TypeId},
     plan::{ColtId, ExecutableQueryPlan, QueryPlanSection, SubMapTerm},
     rule::{ExecutableFlatRule, FlatRulePayload, QueryVariable},
-    term::{TermId, TermTable, TreeTerm, TreeTermInput},
+    term::{TermId, TermTable, TermTuple, TreeTerm, TreeTermInput},
 };
 
 struct PendingRewrite {
@@ -17,11 +18,36 @@ struct PendingRewrite {
     new_term_id: TermId,
 }
 
+struct DatabaseBump(&'static UnsafeCell<Bump>);
+
+impl DatabaseBump {
+    fn new() -> Self {
+        Self(Box::leak(Box::new(UnsafeCell::new(Bump::new()))))
+    }
+
+    // SAFETY: Caller must ensure `DatabaseBump` is not dropped before all uses of the `Bump` are
+    // dropped.
+    unsafe fn get(&self) -> &'static Bump {
+        unsafe { &*self.0.get() }
+    }
+}
+
+impl Drop for DatabaseBump {
+    fn drop(&mut self) {
+        // SAFETY: By this point, no reference to the internal `Bump` should exist, as per
+        // `DatabaseBump::get`
+        unsafe {
+            drop(Box::from_raw(ptr::from_ref(self.0) as *mut UnsafeCell<Bump>));
+        }
+    }
+}
+
 pub struct Database {
     maps: Vec<Map>,
     term_type_table: TermTable<TypeId>,
     type_id_generator: IdGenerator,
     pending_rewrites: Vec<PendingRewrite>,
+    bump: DatabaseBump,
 }
 
 impl Database {
@@ -31,6 +57,7 @@ impl Database {
             term_type_table: TermTable::new(),
             type_id_generator: IdGenerator::new(),
             pending_rewrites: Vec::new(),
+            bump: DatabaseBump::new(),
         }
     }
 
@@ -54,7 +81,7 @@ impl Database {
         maps: &[Map],
         term_type_table: &mut TermTable<TypeId>,
         map_id: MapId,
-        mut term_tuple: TermTuple,
+        mut term_tuple: TermTuple<'static>,
         trusted_input: bool,
     ) -> TermId {
         let map = &maps[map_id.0];
@@ -66,6 +93,10 @@ impl Database {
                 "invalid argument count for map"
             );
 
+            for term_id in &mut term_tuple.term_ids {
+                *term_id = term_type_table.canonicalize(*term_id);
+            }
+
             assert!(
                 term_tuple
                     .term_ids
@@ -74,10 +105,6 @@ impl Database {
                     .all(|(argument, type_id)| *term_type_table.get(*argument) == *type_id),
                 "mismatching types for map"
             );
-
-            for term_id in &mut term_tuple.term_ids {
-                *term_id = term_type_table.canonicalize(*term_id);
-            }
         }
 
         *map.map_terms
@@ -85,28 +112,40 @@ impl Database {
             .or_insert_with(|| term_type_table.insert_flat_term(map.signature.output_type_id))
     }
 
-    pub fn new_term(&mut self, term: &TreeTerm) -> TermId {
+    fn new_term_inner(
+        maps: &[Map],
+        term_type_table: &mut TermTable<TypeId>,
+        bump: &'static Bump,
+        term: &TreeTerm,
+    ) -> TermId {
         let term_tuple = TermTuple {
             term_ids: term
                 .inputs
                 .iter()
                 .map(|input| match input {
-                    TreeTermInput::TreeTerm(term) => self.new_term(term),
-                    TreeTermInput::TermId(term_id) => self.canonicalize(*term_id),
+                    TreeTermInput::TreeTerm(term) => {
+                        Self::new_term_inner(maps, term_type_table, bump, term)
+                    }
+                    TreeTermInput::TermId(term_id) => term_type_table.canonicalize(*term_id),
                 })
-                .collect(),
+                .collect_in(bump),
         };
 
-        Self::insert_map_member(
+        Self::insert_map_member(maps, term_type_table, term.map_id, term_tuple, false)
+    }
+
+    pub fn new_term(&mut self, term: &TreeTerm) -> TermId {
+        Self::new_term_inner(
             &self.maps,
             &mut self.term_type_table,
-            term.map_id,
-            term_tuple,
-            false,
+            // `Database`'s drop order ensures this reference is dropped
+            // before the `DatabaseBump` is dropped
+            unsafe { self.bump.get() },
+            term,
         )
     }
 
-    fn map_member_term_id(&self, map_id: MapId, map_member: TermTuple) -> Option<TermId> {
+    fn map_member_term_id(&self, map_id: MapId, map_member: TermTuple<'static>) -> Option<TermId> {
         self.maps[map_id.0].map_terms.get(&map_member)
     }
 
@@ -121,7 +160,11 @@ impl Database {
                         TreeTermInput::TreeTerm(term) => self.term_id(term),
                         TreeTermInput::TermId(term_id) => Some(*term_id),
                     })
-                    .collect::<Option<Vec<_>>>()?,
+                    .collect_in::<Option<_>>(
+                        // `Database`'s drop order ensures this reference is dropped
+                        // before the `DatabaseBump` is dropped
+                        unsafe { self.bump.get() },
+                    )?,
             },
         )
     }
@@ -134,14 +177,17 @@ impl Database {
             &mut self.term_type_table,
             const_map,
             TermTuple {
-                term_ids: Vec::new(),
+                // `Database`'s drop order ensures this reference is dropped
+                // before the `DatabaseBump` is dropped
+                term_ids: bumpalo::collections::Vec::new_in(unsafe { self.bump.get() }),
             },
             true,
         )
     }
 
-    fn resolution_attempt(
-        colts: &mut BTreeMap<ColtId, ColtRef<'_, '_>>,
+    fn resolution_attempt<'a>(
+        bump: &'a Bump,
+        colts: &mut BTreeMap<ColtId, ColtRef<'_, '_, 'a>>,
         query_plan_sections: &[QueryPlanSection],
         current_substitution: &mut BTreeMap<QueryVariable, TermId>,
         callback: &mut impl FnMut(&BTreeMap<QueryVariable, TermId>),
@@ -158,7 +204,7 @@ impl Database {
                     .tuple_indices()
                     .keys()
                     .map(|variable| current_substitution[variable])
-                    .collect(),
+                    .collect_in(bump),
             };
 
             // SAFETY: When this is the final section of the plan, we ignore the first COLT
@@ -174,6 +220,7 @@ impl Database {
         }
 
         Self::search_inner(
+            bump,
             colts,
             &query_plan_sections[1..],
             current_substitution,
@@ -185,8 +232,9 @@ impl Database {
         }
     }
 
-    fn search_inner(
-        colts: &mut BTreeMap<ColtId, ColtRef<'_, '_>>,
+    fn search_inner<'a>(
+        bump: &'a Bump,
+        colts: &mut BTreeMap<ColtId, ColtRef<'_, '_, 'a>>,
         query_plan_sections: &[QueryPlanSection],
         current_substitution: &mut BTreeMap<QueryVariable, TermId>,
         callback: &mut impl FnMut(&BTreeMap<QueryVariable, TermId>),
@@ -209,6 +257,7 @@ impl Database {
                         );
 
                         Self::resolution_attempt(
+                            bump,
                             colts,
                             query_plan_sections,
                             current_substitution,
@@ -227,6 +276,7 @@ impl Database {
                         );
 
                         Self::resolution_attempt(
+                            bump,
                             colts,
                             query_plan_sections,
                             current_substitution,
@@ -239,6 +289,7 @@ impl Database {
     }
 
     fn search(
+        bump: &Bump,
         maps: &[Map],
         executable_query_plan: &ExecutableQueryPlan,
         callback: &mut impl FnMut(&BTreeMap<QueryVariable, TermId>),
@@ -251,6 +302,7 @@ impl Database {
                     colt_id,
                     Colt::new(
                         &maps[schematic.map_id.0],
+                        bump,
                         &schematic.tuple_schematics,
                         schematic.new_terms_required,
                     ),
@@ -259,6 +311,7 @@ impl Database {
             .collect::<BTreeMap<_, _>>();
 
         Self::search_inner(
+            bump,
             &mut colts
                 .iter()
                 .map(|(colt_id, colt)| (*colt_id, ColtRef { colt, parent: None }))
@@ -281,17 +334,23 @@ impl Database {
         }
     }
 
-    pub(crate) fn run_rules_once(&mut self, rules: &[ExecutableFlatRule]) {
+    pub(crate) fn run_rules_once(&mut self, bump: &Bump, rules: &[ExecutableFlatRule<'_>]) {
         self.end_pre_run_map_terms();
 
         let mut created_terms = Vec::new();
 
         for rule in rules {
-            Self::search(&self.maps, &rule.query_plan, &mut |substitution| {
+            Self::search(bump, &self.maps, &rule.query_plan, &mut |substitution| {
                 for payload in rule.payloads {
                     match payload {
                         FlatRulePayload::Creation(term) => {
-                            let inputs = term.substitute(substitution, &created_terms);
+                            let inputs = term.substitute(
+                                // `Database`'s drop order ensures this reference is dropped
+                                // before the `DatabaseBump` is dropped
+                                unsafe { self.bump.get() },
+                                substitution,
+                                &created_terms,
+                            );
 
                             created_terms.push(Database::insert_map_member(
                                 &self.maps,

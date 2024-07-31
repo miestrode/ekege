@@ -1,4 +1,7 @@
-use std::ops::{Index, IndexMut};
+use std::{
+    collections::BTreeMap,
+    ops::{Index, IndexMut},
+};
 
 pub use ekege_macros::term;
 use rustc_hash::FxHashSet;
@@ -123,5 +126,20 @@ impl<T> TermTable<T> {
 impl<T> Default for TermTable<T> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct TermTuple<'a> {
+    pub(crate) term_ids: bumpalo::collections::Vec<'a, TermId>,
+}
+
+impl<'a> TermTuple<'a> {
+    pub(crate) fn substitute(&mut self, substitution: &BTreeMap<TermId, TermId>) {
+        for term_id in &mut self.term_ids {
+            if let Some(new_term_id) = substitution.get(term_id) {
+                *term_id = *new_term_id
+            }
+        }
     }
 }

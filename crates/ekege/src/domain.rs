@@ -1,3 +1,5 @@
+use bumpalo::Bump;
+
 use crate::{database::Database, rule::FlatRule};
 
 pub struct Domain {
@@ -21,6 +23,8 @@ impl Domain {
     }
 
     pub fn run_rules(&mut self, times: usize) {
+        let bump = Bump::new();
+
         let executable_rules = self
             .rules
             .iter()
@@ -28,7 +32,7 @@ impl Domain {
             .collect::<Vec<_>>();
 
         for _ in 0..times {
-            self.database.run_rules_once(&executable_rules);
+            self.database.run_rules_once(&bump, &executable_rules);
             self.database.rebuild();
         }
     }

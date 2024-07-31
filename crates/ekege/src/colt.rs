@@ -1,50 +1,20 @@
 use std::{cell::UnsafeCell, collections::BTreeMap, ops::Range};
 
+use bumpalo::{collections::CollectIn, Bump};
 use either::Either;
-use rustc_hash::FxHashMap;
+use rustc_hash::FxBuildHasher;
 
 use crate::{
-    map::{Map, MapTerms},
+    map::{Map, MapTerms, SeparatedMapTerm},
     plan::{SchematicAtom, SchematicAtomInner},
     rule::QueryVariable,
-    term::TermId,
+    term::TermTuple,
 };
 
 // TODO: Remove this once `precise_capturing` is stabilized
 pub(crate) trait Captures<U> {}
 
 impl<T: ?Sized, U> Captures<U> for T {}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub(crate) struct TermTuple {
-    pub(crate) term_ids: Vec<TermId>,
-}
-
-impl TermTuple {
-    pub(crate) fn substitute(&mut self, substitution: &BTreeMap<TermId, TermId>) {
-        for term_id in &mut self.term_ids {
-            if let Some(new_term_id) = substitution.get(term_id) {
-                *term_id = *new_term_id
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct SeparatedMapTerm<'a> {
-    pub(crate) member: &'a [TermId],
-    pub(crate) term_id: TermId,
-}
-
-impl<'a> SeparatedMapTerm<'a> {
-    pub(crate) fn get(&self, index: usize) -> TermId {
-        if index == self.member.len() {
-            self.term_id
-        } else {
-            self.member[index]
-        }
-    }
-}
 
 struct TupleSchematic {
     indices: BTreeMap<QueryVariable, usize>,
@@ -90,29 +60,33 @@ fn is_valid<'a>(
     })
 }
 
-enum ColtStorage<'a> {
-    Map(FxHashMap<TermTuple, Colt<'a>>),
-    Vector(Vec<usize>),
+type BumpBackedFxHashMap<'a, K, V> = hashbrown::HashMap<K, V, FxBuildHasher, &'a Bump>;
+
+enum ColtStorage<'a, 'b> {
+    Map(BumpBackedFxHashMap<'b, TermTuple<'b>, Colt<'a, 'b>>),
+    Vector(bumpalo::collections::Vec<'b, usize>),
     MapTermsRange(Range<usize>),
 }
 
 // TODO: No need to own all of this information
-pub(crate) struct Colt<'a> {
+pub(crate) struct Colt<'a, 'b> {
     map_terms: &'a MapTerms,
+    bump: &'b Bump,
     schematic: &'a [&'a [SchematicAtom]],
     tuple_indices_and_requirements: TupleSchematic,
-    storage: UnsafeCell<ColtStorage<'a>>,
+    storage: UnsafeCell<ColtStorage<'a, 'b>>,
 }
 
 #[derive(Clone)]
-pub(crate) struct ColtRef<'a, 'b> {
-    pub(crate) colt: &'b Colt<'a>,
-    pub(crate) parent: Option<Box<ColtRef<'a, 'b>>>,
+pub(crate) struct ColtRef<'a, 'b, 'c> {
+    pub(crate) colt: &'b Colt<'a, 'c>,
+    pub(crate) parent: Option<Box<ColtRef<'a, 'b, 'c>>>,
 }
 
-impl<'a> Colt<'a> {
+impl<'a, 'b> Colt<'a, 'b> {
     pub(crate) fn new(
         map: &'a Map,
+        bump: &'b Bump,
         schematic: &'a [&'a [SchematicAtom]],
         new_terms_required: bool,
     ) -> Self {
@@ -125,6 +99,7 @@ impl<'a> Colt<'a> {
             } else {
                 0..map.map_terms.pre_run_new_map_terms_range.end
             })),
+            bump,
         }
     }
 
@@ -140,20 +115,20 @@ impl<'a> Colt<'a> {
     }
 
     // SAFETY: Caller must ensure storage isn't already mutably borrowed
-    unsafe fn storage(&self) -> &ColtStorage<'a> {
+    unsafe fn storage(&self) -> &ColtStorage<'a, 'b> {
         // SAFTEY: We assume storage isn't already mutably borrowed
         unsafe { &*self.storage.get() }
     }
 
     #[allow(clippy::mut_from_ref)]
     // SAFETY: Caller must ensure storage isn't already borrowed
-    unsafe fn storage_mut(&self) -> &mut ColtStorage<'a> {
+    unsafe fn storage_mut(&self) -> &mut ColtStorage<'a, 'b> {
         // SAFETY: We assume storage isn't already borrowed
         unsafe { &mut *self.storage.get() }
     }
 
     // SAFETY: Caller must ensure storage isn't already mutably borrowed
-    unsafe fn map(&self) -> Option<&FxHashMap<TermTuple, Self>> {
+    unsafe fn map(&self) -> Option<&BumpBackedFxHashMap<'b, TermTuple<'b>, Colt<'a, 'b>>> {
         // SAFTEY: We assume storage isn't already mutably borrowed
         match unsafe { self.storage() } {
             ColtStorage::Map(map) => Some(map),
@@ -161,18 +136,19 @@ impl<'a> Colt<'a> {
         }
     }
 
-    fn vector_mut(&mut self) -> Option<&mut Vec<usize>> {
+    fn vector_mut(&mut self) -> Option<&mut bumpalo::collections::Vec<'b, usize>> {
         match self.storage.get_mut() {
             ColtStorage::Vector(vector) => Some(vector),
             ColtStorage::Map(_) | ColtStorage::MapTermsRange(_) => None,
         }
     }
 
+    #[allow(clippy::mutable_key_type)]
     fn populate_map(
         &self,
         map_terms: impl Iterator<Item = SeparatedMapTerm<'a>>,
-    ) -> FxHashMap<TermTuple, Self> {
-        let mut map = FxHashMap::default();
+    ) -> BumpBackedFxHashMap<'b, TermTuple<'b>, Colt<'a, 'b>> {
+        let mut map = BumpBackedFxHashMap::with_hasher_in(FxBuildHasher, self.bump);
 
         for (index, map_term) in map_terms.enumerate() {
             map.entry(TermTuple {
@@ -180,7 +156,7 @@ impl<'a> Colt<'a> {
                     .tuple_indices()
                     .values()
                     .map(|index| map_term.get(*index))
-                    .collect(),
+                    .collect_in(self.bump),
             })
             .or_insert(Colt {
                 map_terms: self.map_terms,
@@ -188,7 +164,10 @@ impl<'a> Colt<'a> {
                 tuple_indices_and_requirements: tuple_schematic(
                     self.schematic.get(1).unwrap_or(&Vec::new().as_slice()),
                 ),
-                storage: UnsafeCell::new(ColtStorage::Vector(Vec::new())),
+                storage: UnsafeCell::new(ColtStorage::Vector(bumpalo::collections::Vec::new_in(
+                    self.bump,
+                ))),
+                bump: self.bump,
             })
             .vector_mut()
             .unwrap()
@@ -199,9 +178,10 @@ impl<'a> Colt<'a> {
     }
 
     // SAFETY: Caller must ensure storage isn't already mutably borrowed
-    unsafe fn vector_iter<'b>(
-        &'b self,
-    ) -> Option<impl Iterator<Item = SeparatedMapTerm<'a>> + Captures<(&'a (), &'b ())>> {
+    unsafe fn vector_iter<'c>(
+        &'c self,
+    ) -> Option<impl Iterator<Item = SeparatedMapTerm<'a>> + Captures<(&'a (), &'b (), &'c ())>>
+    {
         // SAFTEY: We assume storage isn't already mutably borrowed
         let colt_storage = unsafe { self.storage() };
         let index_iterator = match colt_storage {
@@ -221,22 +201,23 @@ impl<'a> Colt<'a> {
 
     // SAFETY: Caller must ensure storage isn't already borrowed
     unsafe fn force(&self) {
-        // SAFTEY: We assume storage isn't already borrowed
-        let colt_storage = unsafe { self.storage_mut() };
-
-        if let ColtStorage::Map(_) = colt_storage {
+        let Some(map_terms) = (unsafe { self.vector_iter() }) else {
             return;
-        }
+        };
 
-        *colt_storage = ColtStorage::Map(self.populate_map(unsafe { self.vector_iter() }.unwrap()));
+        #[allow(clippy::mutable_key_type)]
+        let map = self.populate_map(map_terms);
+
+        // SAFTEY: We assume storage isn't already borrowed
+        *unsafe { self.storage_mut() } = ColtStorage::Map(map);
     }
 
     // SAFETY: Caller must ensure storage isn't already borrowed
-    pub(crate) unsafe fn get<'b>(
-        &'b self,
-        tuple: &TermTuple,
-        parent: Option<Box<ColtRef<'a, 'b>>>,
-    ) -> Option<ColtRef<'a, '_>> {
+    pub(crate) unsafe fn get<'c>(
+        &'c self,
+        tuple: &TermTuple<'b>,
+        parent: Option<Box<ColtRef<'a, 'c, 'b>>>,
+    ) -> Option<ColtRef<'a, '_, 'b>> {
         // SAFTEY: We assume storage isn't already borrowed
         unsafe { self.force() };
 
@@ -248,11 +229,11 @@ impl<'a> Colt<'a> {
     }
 
     // SAFETY: Caller must ensure storage isn't already borrowed
-    pub(crate) unsafe fn iter<'b>(
-        &'b self,
+    pub(crate) unsafe fn iter<'c>(
+        &'c self,
     ) -> Either<
-        impl Iterator<Item = SeparatedMapTerm<'a>> + Captures<&'b ()>,
-        impl Iterator<Item = &'b TermTuple> + Captures<&'a ()>,
+        impl Iterator<Item = SeparatedMapTerm<'a>> + Captures<(&'b (), &'c ())>,
+        impl Iterator<Item = &'c TermTuple> + Captures<(&'a (), &'b ())>,
     > {
         // SAFTEY: We assume storage isn't already borrowed
         let map = unsafe { self.map() };

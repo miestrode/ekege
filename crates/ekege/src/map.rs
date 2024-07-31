@@ -3,17 +3,17 @@ use std::{
     ops::{Deref, Range},
 };
 
-pub use ekege_macros::map_signature;
 use indexmap::map::Entry;
 #[allow(clippy::disallowed_types)]
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 
 use crate::{
-    colt::{SeparatedMapTerm, TermTuple},
     id::Id,
-    term::TermId,
+    term::{TermId, TermTuple},
 };
+
+pub use ekege_macros::map_signature;
 
 #[allow(clippy::disallowed_types)]
 type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
@@ -27,8 +27,24 @@ pub struct MapSignature {
     pub output_type_id: TypeId,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct SeparatedMapTerm<'a> {
+    pub(crate) member: &'a [TermId],
+    pub(crate) term_id: TermId,
+}
+
+impl<'a> SeparatedMapTerm<'a> {
+    pub(crate) fn get(&self, index: usize) -> TermId {
+        if index == self.member.len() {
+            self.term_id
+        } else {
+            self.member[index]
+        }
+    }
+}
+
 pub(crate) struct MapTerms {
-    map_terms: UnsafeCell<FxIndexMap<TermTuple, TermId>>,
+    map_terms: UnsafeCell<FxIndexMap<TermTuple<'static>, TermId>>,
     pub(crate) pre_run_new_map_terms_range: Range<usize>,
 }
 
@@ -56,12 +72,15 @@ impl MapTerms {
             })
     }
 
-    pub(crate) fn get(&self, term_tuple: &TermTuple) -> Option<TermId> {
+    pub(crate) fn get(&self, term_tuple: &TermTuple<'static>) -> Option<TermId> {
         // SAFETY: No references are yielded
         unsafe { &*self.map_terms.get() }.get(term_tuple).copied()
     }
 
-    pub(crate) fn entry(&self, term_tuple: TermTuple) -> Entry<'_, TermTuple, TermId> {
+    pub(crate) fn entry(
+        &self,
+        term_tuple: TermTuple<'static>,
+    ) -> Entry<'_, TermTuple<'static>, TermId> {
         // SAFETY: Due to construction, no reference will be invalidated
         unsafe { &mut *self.map_terms.get() }.entry(term_tuple)
     }
