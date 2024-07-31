@@ -11,6 +11,7 @@ pub enum SchematicAtomInner {
 }
 
 impl SchematicAtomInner {
+    #[inline(always)]
     fn canonicalize(&mut self, database: &mut Database) {
         if let SchematicAtomInner::TermId(term_id) = self {
             *term_id = database.canonicalize(*term_id)
@@ -25,6 +26,7 @@ pub struct SchematicAtom {
 }
 
 impl SchematicAtom {
+    #[inline(always)]
     fn canonicalize(&mut self, database: &mut Database) {
         self.inner.canonicalize(database);
     }
@@ -39,6 +41,7 @@ pub struct SubMapTerm {
 }
 
 impl SubMapTerm {
+    #[inline(always)]
     fn canonicalize(&mut self, database: &mut Database) {
         for atom in &mut self.atoms {
             atom.canonicalize(database);
@@ -52,6 +55,7 @@ pub struct QueryPlanSection {
 }
 
 impl QueryPlanSection {
+    #[inline(always)]
     fn canonicalize(&mut self, database: &mut Database) {
         for sub_map_term in &mut self.sub_map_terms {
             sub_map_term.canonicalize(database);
@@ -76,6 +80,7 @@ pub struct QueryPlan {
 }
 
 impl QueryPlan {
+    #[inline(always)]
     pub(crate) fn canonicalize(&mut self, database: &mut Database) {
         for section in &mut self.sections {
             section.canonicalize(database);

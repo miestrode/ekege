@@ -20,6 +20,7 @@ pub enum FlatTermPatternInput {
 }
 
 impl FlatTermPatternInput {
+    #[inline(always)]
     fn canonicalize(&mut self, database: &mut Database) {
         if let Self::TermId(term_id) = self {
             *term_id = database.canonicalize(*term_id);
@@ -46,6 +47,7 @@ pub struct FlatTermPattern {
 }
 
 impl FlatTermPattern {
+    #[inline(always)]
     fn canonicalize(&mut self, database: &mut Database) {
         for input in &mut self.inputs {
             input.canonicalize(database);
@@ -74,6 +76,7 @@ pub enum FlatRulePayload {
 }
 
 impl FlatRulePayload {
+    #[inline(always)]
     fn canonicalize(&mut self, database: &mut Database) {
         match self {
             FlatRulePayload::Creation(term_pattern) => term_pattern.canonicalize(database),
@@ -97,6 +100,7 @@ pub struct FlatRule {
 }
 
 impl FlatRule {
+    #[inline(always)]
     pub(crate) fn canonicalize(&mut self, database: &mut Database) {
         self.query_plan.canonicalize(database);
 
