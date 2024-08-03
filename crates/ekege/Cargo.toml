@@ -15,7 +15,6 @@ either.workspace = true
 rustc-hash.workspace = true
 bumpalo.workspace = true
 hashbrown.workspace = true
-smallvec.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
