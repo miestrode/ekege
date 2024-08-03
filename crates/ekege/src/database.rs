@@ -8,7 +8,7 @@ use crate::{
     colt::{Colt, ColtRef},
     id::{Id, IdGenerator},
     map::{Map, MapId, MapSignature, MapTerms, TypeId},
-    plan::{ColtId, ExecutableQueryPlan, QueryPlanSection, SubMapTerm},
+    plan::{ColtId, ExecutableQueryPlan},
     rule::{ExecutableFlatRule, FlatRulePayload, QueryVariable},
     term::{TermId, TermTable, TermTuple, TreeTerm, TreeTermInput},
 };
@@ -44,7 +44,7 @@ impl Drop for DatabaseBump {
 
 pub struct Database {
     maps: Vec<Map>,
-    term_type_table: TermTable<TypeId>,
+    pub(crate) term_type_table: TermTable<TypeId>,
     type_id_generator: IdGenerator,
     pending_rewrites: Vec<PendingRewrite>,
     bump: DatabaseBump,
@@ -188,22 +188,20 @@ impl Database {
     fn resolution_attempt<'a>(
         bump: &'a Bump,
         colts: &mut BTreeMap<ColtId, ColtRef<'_, '_, 'a>>,
-        query_plan_sections: &[QueryPlanSection],
+        covers: &[Vec<ColtId>],
         current_substitution: &mut BTreeMap<QueryVariable, TermId>,
         callback: &mut impl FnMut(&BTreeMap<QueryVariable, TermId>),
     ) {
-        let sub_map_terms = &query_plan_sections[0].sub_map_terms
-            [if query_plan_sections.len() == 1 { 1 } else { 0 }..];
+        let colt_ids = &covers[0][if covers.len() == 1 { 1 } else { 0 }..];
 
-        for &SubMapTerm { colt_id, .. } in sub_map_terms {
+        for &colt_id in colt_ids {
             let colt_ref = &colts[&colt_id];
             let colt = colt_ref.colt;
 
             let subtuple = TermTuple {
-                term_ids: colt
-                    .tuple_indices()
-                    .keys()
-                    .map(|variable| current_substitution[variable])
+                term_ids: colt.sub_schematics[0]
+                    .indices()
+                    .map(|(variable, _)| current_substitution[&variable])
                     .collect_in(bump),
             };
 
@@ -219,15 +217,9 @@ impl Database {
             }
         }
 
-        Self::search_inner(
-            bump,
-            colts,
-            &query_plan_sections[1..],
-            current_substitution,
-            callback,
-        );
+        Self::search_inner(bump, colts, &covers[1..], current_substitution, callback);
 
-        for &SubMapTerm { colt_id, .. } in sub_map_terms {
+        for &colt_id in colt_ids {
             colts.insert(colt_id, *colts[&colt_id].parent.clone().unwrap());
         }
     }
@@ -235,14 +227,14 @@ impl Database {
     fn search_inner<'a>(
         bump: &'a Bump,
         colts: &mut BTreeMap<ColtId, ColtRef<'_, '_, 'a>>,
-        query_plan_sections: &[QueryPlanSection],
+        covers: &[Vec<ColtId>],
         current_substitution: &mut BTreeMap<QueryVariable, TermId>,
         callback: &mut impl FnMut(&BTreeMap<QueryVariable, TermId>),
     ) {
-        if query_plan_sections.is_empty() {
+        if covers.is_empty() {
             callback(current_substitution);
         } else {
-            let cover = colts[&query_plan_sections[0].sub_map_terms[0].colt_id].colt;
+            let cover = colts[&covers[0][0]].colt;
 
             // SAFETY: As shown below, `cover` won't be changed while it is being iterated, making `get` and `iter` safe
             let iter = unsafe { cover.iter() };
@@ -251,15 +243,15 @@ impl Database {
                 Either::Left(separated_map_terms) => {
                     for separated_map_term in separated_map_terms {
                         current_substitution.extend(
-                            cover.tuple_indices().iter().map(|(variable, index)| {
-                                (*variable, separated_map_term.get(*index))
-                            }),
+                            cover.sub_schematics[0]
+                                .indices()
+                                .map(|(variable, index)| (variable, separated_map_term.get(index))),
                         );
 
                         Self::resolution_attempt(
                             bump,
                             colts,
-                            query_plan_sections,
+                            covers,
                             current_substitution,
                             callback,
                         );
@@ -268,17 +260,16 @@ impl Database {
                 Either::Right(tuples) => {
                     for tuple in tuples {
                         current_substitution.extend(
-                            cover
-                                .tuple_indices()
-                                .keys()
-                                .copied()
+                            cover.sub_schematics[0]
+                                .indices()
+                                .map(|(variable, _)| variable)
                                 .zip(tuple.term_ids.iter().copied()),
                         );
 
                         Self::resolution_attempt(
                             bump,
                             colts,
-                            query_plan_sections,
+                            covers,
                             current_substitution,
                             callback,
                         );
@@ -303,7 +294,7 @@ impl Database {
                     Colt::new(
                         &maps[schematic.map_id.0],
                         bump,
-                        &schematic.tuple_schematics,
+                        &schematic.sub_schematics,
                         schematic.new_terms_required,
                     ),
                 )
@@ -316,7 +307,7 @@ impl Database {
                 .iter()
                 .map(|(colt_id, colt)| (*colt_id, ColtRef { colt, parent: None }))
                 .collect(),
-            &executable_query_plan.query_plan.sections,
+            &executable_query_plan.covers,
             &mut BTreeMap::new(),
             callback,
         );

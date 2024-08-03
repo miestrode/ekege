@@ -1,4 +1,4 @@
-use std::{cell::UnsafeCell, collections::BTreeMap, ops::Range};
+use std::{cell::UnsafeCell, ops::Range};
 
 use bumpalo::{collections::CollectIn, Bump};
 use either::Either;
@@ -6,8 +6,7 @@ use rustc_hash::FxBuildHasher;
 
 use crate::{
     map::{Map, MapTerms, SeparatedMapTerm},
-    plan::{SchematicAtom, SchematicAtomInner},
-    rule::QueryVariable,
+    plan::SubMapTermSchematic,
     term::TermTuple,
 };
 
@@ -15,50 +14,6 @@ use crate::{
 pub(crate) trait Captures<U> {}
 
 impl<T: ?Sized, U> Captures<U> for T {}
-
-struct TupleSchematic {
-    indices: BTreeMap<QueryVariable, usize>,
-    requirements: BTreeMap<QueryVariable, Vec<usize>>,
-}
-
-// Given a valid tuple for given schematic atoms, which parts fo export for free join?
-// For example, given schematic (0: X, 1: Y, 2: X), we would export indices 1 and 2, so that for
-// the tuple (3, 4, 3), for example, we would extract (4, 3)
-fn tuple_schematic(atoms: &[SchematicAtom]) -> TupleSchematic {
-    let mut indices = BTreeMap::new();
-    let mut requirements = BTreeMap::new();
-
-    for atom in atoms {
-        if let SchematicAtomInner::Variable(variable) = atom.inner {
-            if let Some(&old_index) = indices.get(&variable) {
-                requirements.insert(variable, vec![old_index, atom.tuple_index]);
-            } else {
-                indices.insert(variable, atom.tuple_index);
-            }
-        }
-    }
-
-    TupleSchematic {
-        indices,
-        requirements,
-    }
-}
-
-// Given a tuple and a schematic, is that tuple valid?
-// For example, for schematic (0: X, 1: Y, 2: X) and tuple (3, 4, 5), the tuple is invalid, as 3 != 5
-fn is_valid<'a>(
-    separated_map_term: SeparatedMapTerm<'_>,
-    mut requirements: impl Iterator<Item = &'a [usize]>,
-) -> bool {
-    requirements.all(|indices| {
-        let first_term_id = separated_map_term.get(indices[0]);
-
-        indices[1..]
-            .iter()
-            .map(|&index| separated_map_term.get(index))
-            .all(|term_id| term_id == first_term_id)
-    })
-}
 
 type BumpBackedFxHashMap<'a, K, V> = hashbrown::HashMap<K, V, FxBuildHasher, &'a Bump>;
 
@@ -72,8 +27,7 @@ enum ColtStorage<'a, 'b> {
 pub(crate) struct Colt<'a, 'b> {
     map_terms: &'a MapTerms,
     bump: &'b Bump,
-    schematic: &'a [&'a [SchematicAtom]],
-    tuple_indices_and_requirements: TupleSchematic,
+    pub(crate) sub_schematics: &'a [SubMapTermSchematic],
     storage: UnsafeCell<ColtStorage<'a, 'b>>,
 }
 
@@ -87,13 +41,12 @@ impl<'a, 'b> Colt<'a, 'b> {
     pub(crate) fn new(
         map: &'a Map,
         bump: &'b Bump,
-        schematic: &'a [&'a [SchematicAtom]],
+        sub_schematics: &'a [SubMapTermSchematic],
         new_terms_required: bool,
     ) -> Self {
         Self {
             map_terms: &map.map_terms,
-            tuple_indices_and_requirements: tuple_schematic(schematic[0]),
-            schematic,
+            sub_schematics,
             storage: UnsafeCell::new(ColtStorage::MapTermsRange(if new_terms_required {
                 map.map_terms.pre_run_new_map_terms_range.clone()
             } else {
@@ -101,17 +54,6 @@ impl<'a, 'b> Colt<'a, 'b> {
             })),
             bump,
         }
-    }
-
-    pub(crate) fn tuple_indices(&self) -> &BTreeMap<QueryVariable, usize> {
-        &self.tuple_indices_and_requirements.indices
-    }
-
-    fn tuple_requirements(&self) -> impl Iterator<Item = &[usize]> + '_ {
-        self.tuple_indices_and_requirements
-            .requirements
-            .values()
-            .map(Vec::as_slice)
     }
 
     // SAFETY: Caller must ensure storage isn't already mutably borrowed
@@ -152,18 +94,14 @@ impl<'a, 'b> Colt<'a, 'b> {
 
         for (index, map_term) in map_terms.enumerate() {
             map.entry(TermTuple {
-                term_ids: self
-                    .tuple_indices()
-                    .values()
-                    .map(|index| map_term.get(*index))
+                term_ids: self.sub_schematics[0]
+                    .indices()
+                    .map(|(_, index)| map_term.get(index))
                     .collect_in(self.bump),
             })
             .or_insert(Colt {
                 map_terms: self.map_terms,
-                schematic: &self.schematic[1..],
-                tuple_indices_and_requirements: tuple_schematic(
-                    self.schematic.get(1).unwrap_or(&Vec::new().as_slice()),
-                ),
+                sub_schematics: &self.sub_schematics[1..],
                 storage: UnsafeCell::new(ColtStorage::Vector(bumpalo::collections::Vec::new_in(
                     self.bump,
                 ))),
@@ -194,7 +132,7 @@ impl<'a, 'b> Colt<'a, 'b> {
             index_iterator
                 .map(|index| self.map_terms.get_by_index(index).unwrap())
                 .filter(|&separated_map_term| {
-                    is_valid(separated_map_term, self.tuple_requirements())
+                    self.sub_schematics[0].requirements_satisfied(separated_map_term)
                 }),
         )
     }
@@ -239,7 +177,7 @@ impl<'a, 'b> Colt<'a, 'b> {
         let map = unsafe { self.map() };
 
         // TODO: Change this when Polonius is stable. See: https://blog.rust-lang.org/2022/08/05/nll-by-default.html
-        let subtries_unneccessary = self.schematic.len() == 1 && map.is_none();
+        let subtries_unneccessary = self.sub_schematics.len() == 1 && map.is_none();
 
         if subtries_unneccessary {
             // SAFTEY: We assume storage isn't already borrowed

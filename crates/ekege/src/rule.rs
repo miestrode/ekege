@@ -3,11 +3,10 @@ pub use ekege_macros::{equivalence, rewrite, rule};
 use std::collections::BTreeMap;
 
 use crate::{
-    database::Database,
     id::Id,
     map::MapId,
     plan::{ExecutableQueryPlan, QueryPlan},
-    term::{TermId, TermTuple},
+    term::{TermId, TermTable, TermTuple},
 };
 
 pub type QueryVariable = Id;
@@ -21,9 +20,9 @@ pub enum FlatTermPatternInput {
 
 impl FlatTermPatternInput {
     #[inline(always)]
-    fn canonicalize(&mut self, database: &mut Database) {
+    fn canonicalize<T>(&mut self, term_table: &mut TermTable<T>) {
         if let Self::TermId(term_id) = self {
-            *term_id = database.canonicalize(*term_id);
+            *term_id = term_table.canonicalize(*term_id);
         }
     }
 
@@ -48,9 +47,9 @@ pub struct FlatTermPattern {
 
 impl FlatTermPattern {
     #[inline(always)]
-    fn canonicalize(&mut self, database: &mut Database) {
+    fn canonicalize<T>(&mut self, term_table: &mut TermTable<T>) {
         for input in &mut self.inputs {
-            input.canonicalize(database);
+            input.canonicalize(term_table);
         }
     }
 
@@ -78,20 +77,26 @@ pub enum FlatRulePayload {
 
 impl FlatRulePayload {
     #[inline(always)]
-    fn canonicalize(&mut self, database: &mut Database) {
+    fn canonicalize<T>(&mut self, term_table: &mut TermTable<T>) {
         match self {
-            FlatRulePayload::Creation(term_pattern) => term_pattern.canonicalize(database),
+            FlatRulePayload::Creation(term_pattern) => term_pattern.canonicalize(term_table),
             FlatRulePayload::Union(term_pattern_input_a, term_pattern_input_b) => {
-                term_pattern_input_a.canonicalize(database);
-                term_pattern_input_b.canonicalize(database);
+                term_pattern_input_a.canonicalize(term_table);
+                term_pattern_input_b.canonicalize(term_table);
             }
         }
     }
 }
 
-pub(crate) struct ExecutableFlatRule<'a> {
-    pub(crate) query_plan: ExecutableQueryPlan<'a>,
-    pub(crate) payloads: &'a [FlatRulePayload],
+pub(crate) struct ExecutableFlatRule<'flat_rule> {
+    pub(crate) query_plan: ExecutableQueryPlan,
+    pub(crate) payloads: &'flat_rule [FlatRulePayload],
+}
+
+impl<'flat_rule> ExecutableFlatRule<'flat_rule> {
+    pub(crate) fn canonicalize_query_plan<T>(&mut self, term_table: &mut TermTable<T>) {
+        self.query_plan.canonicalize(term_table);
+    }
 }
 
 #[derive(Debug)]
@@ -101,12 +106,9 @@ pub struct FlatRule {
 }
 
 impl FlatRule {
-    #[inline(always)]
-    pub(crate) fn canonicalize(&mut self, database: &mut Database) {
-        self.query_plan.canonicalize(database);
-
+    pub(crate) fn canonicalize_payloads<T>(&mut self, term_table: &mut TermTable<T>) {
         for payload in &mut self.payloads {
-            payload.canonicalize(database);
+            payload.canonicalize(term_table);
         }
     }
 

@@ -8,16 +8,9 @@ pub struct Domain {
 }
 
 impl Domain {
-    pub fn new(mut database: Database, rules: impl IntoIterator<Item = FlatRule>) -> Self {
+    pub fn new(database: Database, rules: impl IntoIterator<Item = FlatRule>) -> Self {
         Self {
-            rules: rules
-                .into_iter()
-                .map(|mut rule| {
-                    rule.canonicalize(&mut database);
-
-                    rule
-                })
-                .collect(),
+            rules: rules.into_iter().collect(),
             database,
         }
     }
@@ -27,8 +20,15 @@ impl Domain {
 
         let executable_rules = self
             .rules
-            .iter()
-            .map(FlatRule::to_executable)
+            .iter_mut()
+            .map(|flat_rule| {
+                flat_rule.canonicalize_payloads(&mut self.database.term_type_table);
+
+                let mut executable_flat_rule = FlatRule::to_executable(flat_rule);
+                executable_flat_rule.canonicalize_query_plan(&mut self.database.term_type_table);
+
+                executable_flat_rule
+            })
             .collect::<Vec<_>>();
 
         for _ in 0..times {
