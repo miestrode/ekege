@@ -16,7 +16,7 @@ use crate::{
 pub use ekege_macros::map_signature;
 
 #[allow(clippy::disallowed_types)]
-type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
+pub(crate) type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
 
 pub type TypeId = Id;
 pub type MapId = Id;
@@ -85,24 +85,16 @@ impl MapTerms {
         unsafe { &mut *self.map_terms.get() }.entry(term_tuple)
     }
 
-    pub(crate) fn reinsert(
-        &mut self,
-        map: impl FnOnce(TermTuple) -> TermTuple,
-        index: usize,
-    ) -> Result<Option<TermId>, ()> {
-        let map_terms = &mut self.map_terms.get_mut();
-
-        let (term_tuple, term_id) = map_terms.swap_remove_index(index).ok_or(())?;
-
-        Ok(map_terms.insert(map(term_tuple), term_id))
-    }
-
     pub(crate) fn start_pre_run_new_map_terms(&mut self) {
         self.pre_run_new_map_terms_range.start = self.pre_run_new_map_terms_range.end;
     }
 
     pub(crate) fn end_pre_run_new_map_terms(&mut self) {
         self.pre_run_new_map_terms_range.end = self.len();
+    }
+
+    pub(crate) fn as_inner_mut(&mut self) -> &mut FxIndexMap<TermTuple<'static>, TermId> {
+        self.map_terms.get_mut()
     }
 }
 

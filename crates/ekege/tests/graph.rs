@@ -62,3 +62,38 @@ fn test_graph() {
             .is_some());
     }
 }
+
+#[test]
+fn test_graph_unification() {
+    let mut rng = StdRng::seed_from_u64(SEED);
+
+    let mut database = Database::new();
+
+    let node = database.new_type();
+
+    let mut nodes = vec![database.new_constant(node)];
+
+    for _ in 1..GRAPH_SIZE {
+        let new_node = database.new_constant(node);
+        let other_node = *nodes.choose(&mut rng).unwrap();
+
+        database.unify(new_node, other_node);
+
+        nodes.push(new_node);
+    }
+
+    for _ in 0..MAXIMUM_CYCLES {
+        let node_a = *nodes.choose(&mut rng).unwrap();
+        let node_b = *nodes.choose(&mut rng).unwrap();
+
+        database.unify(node_a, node_b);
+    }
+
+    database.rebuild();
+
+    for first_node_index in 0..GRAPH_SIZE - OFFSET {
+        let (first_node, second_node) = (nodes[first_node_index], nodes[first_node_index + OFFSET]);
+
+        assert!(database.equal(first_node, second_node));
+    }
+}

@@ -7,10 +7,10 @@ use ekege_macros::map_signature;
 use crate::{
     colt::{Colt, ColtRef},
     id::{Id, IdGenerator},
-    map::{Map, MapId, MapSignature, MapTerms, TypeId},
+    map::{FxIndexMap, Map, MapId, MapSignature, MapTerms, SeparatedMapTerm, TypeId},
     plan::{ColtId, ExecutableQueryPlan},
     rule::{ExecutableFlatRule, FlatRulePayload, QueryVariable},
-    term::{TermId, TermTable, TermTuple, TreeTerm, TreeTermInput},
+    term::{TermId, TermTable, TermTuple, TreeTerm, TreeTermInput, UnifyResult},
 };
 
 struct PendingRewrite {
@@ -194,7 +194,16 @@ impl Database {
     ) {
         let colt_ids = &covers[0][if covers.len() == 1 { 1 } else { 0 }..];
 
-        for &colt_id in colt_ids {
+        let mut index = 0;
+
+        loop {
+            if index >= colt_ids.len() {
+                Self::search_inner(bump, colts, &covers[1..], current_substitution, callback);
+                break;
+            }
+
+            let colt_id = colt_ids[index];
+
             let colt_ref = &colts[&colt_id];
             let colt = colt_ref.colt;
 
@@ -212,14 +221,13 @@ impl Database {
             if let Some(subcolt) = unsafe { colt.get(&subtuple, Some(Box::new(colt_ref.clone()))) }
             {
                 colts.insert(colt_id, subcolt);
+                index += 1;
             } else {
-                return;
+                break;
             }
         }
 
-        Self::search_inner(bump, colts, &covers[1..], current_substitution, callback);
-
-        for &colt_id in colt_ids {
+        for &colt_id in &colt_ids[0..index] {
             colts.insert(colt_id, *colts[&colt_id].parent.clone().unwrap());
         }
     }
@@ -386,16 +394,17 @@ impl Database {
             return canonical_term_id_a;
         }
 
-        let new_term_id = term_type_table.unify(canonical_term_id_a, canonical_term_id_b);
+        let UnifyResult {
+            new_term_id,
+            old_term_id,
+        } = term_type_table.unify(canonical_term_id_a, canonical_term_id_b);
 
-        pending_rewrites.push(PendingRewrite {
-            old_term_id: canonical_term_id_a,
-            new_term_id,
-        });
-        pending_rewrites.push(PendingRewrite {
-            old_term_id: canonical_term_id_b,
-            new_term_id,
-        });
+        if old_term_id != new_term_id {
+            pending_rewrites.push(PendingRewrite {
+                old_term_id,
+                new_term_id,
+            });
+        };
 
         new_term_id
     }
@@ -415,25 +424,54 @@ impl Database {
         map: &mut MapTerms,
         substitution: &BTreeMap<TermId, TermId>,
     ) {
-        for index in 0..map.len() {
-            let term_id = map.get_by_index(index).unwrap().term_id;
+        let mut reinsert_term_tuple =
+            |index, map_terms: &mut FxIndexMap<TermTuple<'static>, TermId>| {
+                let (mut term_tuple, term_id) = map_terms.swap_remove_index(index).unwrap();
 
-            if let Some(conflicting_term_id) = map
-                .reinsert(
-                    |mut term_tuple| {
-                        term_tuple.substitute(substitution);
-                        term_tuple
-                    },
-                    index,
-                )
-                .unwrap()
-            {
-                Self::unify_inner(
-                    term_type_table,
-                    pending_rewrites,
-                    term_id,
-                    conflicting_term_id,
-                );
+                term_tuple.substitute(substitution);
+
+                if let Some(conflicting_term_id) = map_terms.insert(term_tuple, term_id) {
+                    Self::unify_inner(
+                        term_type_table,
+                        pending_rewrites,
+                        term_id,
+                        conflicting_term_id,
+                    );
+                }
+            };
+
+        fn is_substitution_relevant(member: &[Id], substitution: &BTreeMap<Id, Id>) -> bool {
+            member
+                .iter()
+                .any(|term_id| substitution.contains_key(term_id))
+        }
+
+        let mut index = 0;
+
+        while index < map.pre_run_new_map_terms_range.start {
+            let SeparatedMapTerm { member, .. } = map.get_by_index(index).unwrap();
+
+            if is_substitution_relevant(member, substitution) {
+                // We move the range one index down. The end will be updated upon rule running.
+                map.pre_run_new_map_terms_range.start -= 1;
+
+                let newest_old_map_term_index = map.pre_run_new_map_terms_range.start;
+
+                let map_terms = map.as_inner_mut();
+
+                map_terms.swap_indices(index, newest_old_map_term_index);
+
+                reinsert_term_tuple(newest_old_map_term_index, map_terms)
+            } else {
+                index += 1;
+            }
+        }
+
+        for index in map.pre_run_new_map_terms_range.start..map.len() {
+            let SeparatedMapTerm { member, .. } = map.get_by_index(index).unwrap();
+
+            if is_substitution_relevant(member, substitution) {
+                reinsert_term_tuple(index, map.as_inner_mut())
             }
         }
     }
@@ -481,7 +519,7 @@ impl Database {
         }
     }
 
-    pub(crate) fn rebuild(&mut self) {
+    pub fn rebuild(&mut self) {
         while !self.pending_rewrites.is_empty() {
             self.rebuild_all_maps_once();
         }

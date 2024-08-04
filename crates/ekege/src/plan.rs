@@ -35,6 +35,7 @@ pub struct QueryPlanSection {
     pub sub_map_terms: Vec<SubMapTerm>,
 }
 
+#[derive(Debug)]
 pub(crate) struct SubMapTermSchematic {
     indices: Vec<(QueryVariable, usize)>,
     equality_requirements: Vec<(usize, usize)>,

@@ -9,7 +9,11 @@ const MAXIMUM_CYCLES: usize = 10;
 const SEED: u64 = 42;
 const TIMES: usize = 3;
 
-fn generate_random_graph(size: NonZeroUsize, maximum_cycles: usize, rng: &mut impl Rng) -> Domain {
+fn generate_regular_random_graph(
+    size: NonZeroUsize,
+    maximum_cycles: usize,
+    rng: &mut impl Rng,
+) -> Domain {
     let mut database = Database::new();
 
     let node = database.new_type();
@@ -47,21 +51,65 @@ fn generate_random_graph(size: NonZeroUsize, maximum_cycles: usize, rng: &mut im
     Domain::new(database, rules)
 }
 
-fn explore_random_graph(domain: &mut Domain, times: usize) {
-    domain.run_rules(times);
+fn generate_unification_random_graph(
+    size: NonZeroUsize,
+    maximum_cycles: usize,
+    rng: &mut impl Rng,
+) -> Database {
+    let mut database = Database::new();
+
+    let node = database.new_type();
+
+    let mut nodes = vec![database.new_constant(node)];
+
+    for _ in 1..size.get() {
+        let new_node = database.new_constant(node);
+        let other_node = *nodes.choose(rng).unwrap();
+
+        database.unify(new_node, other_node);
+
+        nodes.push(new_node);
+    }
+
+    for _ in 0..maximum_cycles {
+        let node_a = *nodes.choose(rng).unwrap();
+        let node_b = *nodes.choose(rng).unwrap();
+
+        database.unify(node_a, node_b);
+    }
+
+    database
 }
 
-fn random_graph_benchmark(c: &mut Criterion) {
-    c.bench_function("random graph", |b| {
-        b.iter_batched_ref(
+fn random_graph_benchmark(criterion: &mut Criterion) {
+    criterion.bench_function("random graph", |bencher| {
+        bencher.iter_batched_ref(
             || {
-                generate_random_graph(
+                generate_regular_random_graph(
                     NonZeroUsize::new(GRAPH_SIZE).unwrap(),
                     MAXIMUM_CYCLES,
                     &mut StdRng::seed_from_u64(SEED),
                 )
             },
-            |domain| explore_random_graph(domain, TIMES),
+            |domain| {
+                domain.run_rules(TIMES);
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    criterion.bench_function("random graph unification", |bencher| {
+        bencher.iter_batched_ref(
+            || {
+                generate_unification_random_graph(
+                    NonZeroUsize::new(GRAPH_SIZE).unwrap(),
+                    MAXIMUM_CYCLES,
+                    &mut StdRng::seed_from_u64(SEED),
+                )
+            },
+            |database| {
+                database.rebuild();
+            },
             BatchSize::SmallInput,
         )
     });

@@ -55,6 +55,11 @@ impl<T> IndexMut<TermId> for TermTable<T> {
     }
 }
 
+pub struct UnifyResult {
+    pub old_term_id: TermId,
+    pub new_term_id: TermId,
+}
+
 impl<T> TermTable<T> {
     pub(crate) fn new() -> Self {
         Self {
@@ -91,12 +96,15 @@ impl<T> TermTable<T> {
         term_id
     }
 
-    pub(crate) fn unify(&mut self, term_id_a: TermId, term_id_b: TermId) -> TermId {
+    pub(crate) fn unify(&mut self, term_id_a: TermId, term_id_b: TermId) -> UnifyResult {
         let root_id_a = self.canonicalize(term_id_a);
         let root_id_b = self.canonicalize(term_id_b);
 
         if root_id_a == root_id_b {
-            return root_id_a;
+            return UnifyResult {
+                new_term_id: root_id_a,
+                old_term_id: root_id_b,
+            };
         }
 
         let [larger_root_id, smaller_root_id] = if self[root_id_a].rank > self[root_id_b].rank {
@@ -115,7 +123,10 @@ impl<T> TermTable<T> {
             self[larger_root_id].rank += 1;
         }
 
-        larger_root_id
+        UnifyResult {
+            new_term_id: larger_root_id,
+            old_term_id: smaller_root_id,
+        }
     }
 
     pub(crate) fn get(&self, term_id: TermId) -> &T {
