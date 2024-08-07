@@ -17,30 +17,24 @@ impl<T: ?Sized, U> Captures<U> for T {}
 
 type BumpBackedFxHashMap<'a, K, V> = hashbrown::HashMap<K, V, FxBuildHasher, &'a Bump>;
 
-enum ColtStorage<'a, 'b> {
-    Map(BumpBackedFxHashMap<'b, TermTuple<'b>, Colt<'a, 'b>>),
-    Vector(bumpalo::collections::Vec<'b, usize>),
+enum ColtStorage<'a> {
+    Map(BumpBackedFxHashMap<'a, TermTuple<'a>, Colt<'a>>),
+    Vector(bumpalo::collections::Vec<'a, usize>),
     MapTermsRange(Range<usize>),
 }
 
 // TODO: No need to own all of this information
-pub(crate) struct Colt<'a, 'b> {
+pub(crate) struct Colt<'a> {
     map_terms: &'a MapTerms,
-    bump: &'b Bump,
+    bump: &'a Bump,
     pub(crate) sub_schematics: &'a [SubMapTermSchematic],
-    storage: UnsafeCell<ColtStorage<'a, 'b>>,
+    storage: UnsafeCell<ColtStorage<'a>>,
 }
 
-#[derive(Clone)]
-pub(crate) struct ColtRef<'a, 'b, 'c> {
-    pub(crate) colt: &'b Colt<'a, 'c>,
-    pub(crate) parent: Option<Box<ColtRef<'a, 'b, 'c>>>,
-}
-
-impl<'a, 'b> Colt<'a, 'b> {
+impl<'a> Colt<'a> {
     pub(crate) fn new(
         map: &'a Map,
-        bump: &'b Bump,
+        bump: &'a Bump,
         sub_schematics: &'a [SubMapTermSchematic],
         new_terms_required: bool,
     ) -> Self {
@@ -57,20 +51,20 @@ impl<'a, 'b> Colt<'a, 'b> {
     }
 
     // SAFETY: Caller must ensure storage isn't already mutably borrowed
-    unsafe fn storage(&self) -> &ColtStorage<'a, 'b> {
+    unsafe fn storage(&self) -> &ColtStorage<'a> {
         // SAFTEY: We assume storage isn't already mutably borrowed
         unsafe { &*self.storage.get() }
     }
 
     #[allow(clippy::mut_from_ref)]
     // SAFETY: Caller must ensure storage isn't already borrowed
-    unsafe fn storage_mut(&self) -> &mut ColtStorage<'a, 'b> {
+    unsafe fn storage_mut(&self) -> &mut ColtStorage<'a> {
         // SAFETY: We assume storage isn't already borrowed
         unsafe { &mut *self.storage.get() }
     }
 
     // SAFETY: Caller must ensure storage isn't already mutably borrowed
-    unsafe fn map(&self) -> Option<&BumpBackedFxHashMap<'b, TermTuple<'b>, Colt<'a, 'b>>> {
+    unsafe fn map(&self) -> Option<&BumpBackedFxHashMap<'a, TermTuple<'a>, Colt<'a>>> {
         // SAFTEY: We assume storage isn't already mutably borrowed
         match unsafe { self.storage() } {
             ColtStorage::Map(map) => Some(map),
@@ -78,7 +72,7 @@ impl<'a, 'b> Colt<'a, 'b> {
         }
     }
 
-    fn vector_mut(&mut self) -> Option<&mut bumpalo::collections::Vec<'b, usize>> {
+    fn vector_mut(&mut self) -> Option<&mut bumpalo::collections::Vec<'a, usize>> {
         match self.storage.get_mut() {
             ColtStorage::Vector(vector) => Some(vector),
             ColtStorage::Map(_) | ColtStorage::MapTermsRange(_) => None,
@@ -89,7 +83,7 @@ impl<'a, 'b> Colt<'a, 'b> {
     fn populate_map(
         &self,
         map_terms: impl Iterator<Item = SeparatedMapTerm<'a>>,
-    ) -> BumpBackedFxHashMap<'b, TermTuple<'b>, Colt<'a, 'b>> {
+    ) -> BumpBackedFxHashMap<'a, TermTuple<'a>, Colt<'a>> {
         let mut map = BumpBackedFxHashMap::with_hasher_in(FxBuildHasher, self.bump);
 
         for (index, map_term) in map_terms.enumerate() {
@@ -116,10 +110,9 @@ impl<'a, 'b> Colt<'a, 'b> {
     }
 
     // SAFETY: Caller must ensure storage isn't already mutably borrowed
-    unsafe fn vector_iter<'c>(
-        &'c self,
-    ) -> Option<impl Iterator<Item = SeparatedMapTerm<'a>> + Captures<(&'a (), &'b (), &'c ())>>
-    {
+    unsafe fn vector_iter<'b>(
+        &'b self,
+    ) -> Option<impl Iterator<Item = SeparatedMapTerm<'a>> + Captures<(&'a (), &'b ())>> {
         // SAFTEY: We assume storage isn't already mutably borrowed
         let colt_storage = unsafe { self.storage() };
         let index_iterator = match colt_storage {
@@ -151,27 +144,20 @@ impl<'a, 'b> Colt<'a, 'b> {
     }
 
     // SAFETY: Caller must ensure storage isn't already borrowed
-    pub(crate) unsafe fn get<'c>(
-        &'c self,
-        tuple: &TermTuple<'b>,
-        parent: Option<Box<ColtRef<'a, 'c, 'b>>>,
-    ) -> Option<ColtRef<'a, '_, 'b>> {
+    pub(crate) unsafe fn get(&self, tuple: &TermTuple<'a>) -> Option<&Colt<'a>> {
         // SAFTEY: We assume storage isn't already borrowed
         unsafe { self.force() };
 
         // SAFTEY: We assume storage isn't already borrowed
-        unsafe { self.map() }
-            .unwrap()
-            .get(tuple)
-            .map(move |colt| ColtRef { colt, parent })
+        unsafe { self.map() }.unwrap().get(tuple)
     }
 
     // SAFETY: Caller must ensure storage isn't already borrowed
-    pub(crate) unsafe fn iter<'c>(
-        &'c self,
+    pub(crate) unsafe fn iter<'b>(
+        &'b self,
     ) -> Either<
-        impl Iterator<Item = SeparatedMapTerm<'a>> + Captures<(&'b (), &'c ())>,
-        impl Iterator<Item = &'c TermTuple> + Captures<(&'a (), &'b ())>,
+        impl Iterator<Item = SeparatedMapTerm<'a>> + Captures<(&'a (), &'b ())>,
+        impl Iterator<Item = &'b TermTuple> + Captures<&'a ()>,
     > {
         // SAFTEY: We assume storage isn't already borrowed
         let map = unsafe { self.map() };

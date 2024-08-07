@@ -5,7 +5,7 @@ use either::Either;
 use ekege_macros::map_signature;
 
 use crate::{
-    colt::{Colt, ColtRef},
+    colt::Colt,
     id::{Id, IdGenerator},
     map::{FxIndexMap, Map, MapId, MapSignature, MapTerms, SeparatedMapTerm, TypeId},
     plan::{ColtId, ExecutableQueryPlan},
@@ -81,7 +81,7 @@ impl Database {
         maps: &[Map],
         term_type_table: &mut TermTable<TypeId>,
         map_id: MapId,
-        mut term_tuple: TermTuple<'static>,
+        term_tuple: TermTuple<'static>,
         trusted_input: bool,
     ) -> TermId {
         let map = &maps[map_id.0];
@@ -92,10 +92,6 @@ impl Database {
                 term_tuple.term_ids.len(),
                 "invalid argument count for map"
             );
-
-            for term_id in &mut term_tuple.term_ids {
-                *term_id = term_type_table.canonicalize(*term_id);
-            }
 
             assert!(
                 term_tuple
@@ -109,7 +105,7 @@ impl Database {
 
         *map.map_terms
             .entry(term_tuple)
-            .or_insert_with(|| term_type_table.insert_flat_term(map.signature.output_type_id))
+            .or_insert_with(|| term_type_table.insert_term(map.signature.output_type_id))
     }
 
     fn new_term_inner(
@@ -187,62 +183,78 @@ impl Database {
 
     fn resolution_attempt<'a>(
         bump: &'a Bump,
-        colts: &mut BTreeMap<ColtId, ColtRef<'_, '_, 'a>>,
-        covers: &[Vec<ColtId>],
+        section_colts: &mut [BTreeMap<ColtId, &Colt<'a>>],
+        section_colt_ids: &[Vec<ColtId>],
+        subtuples: &mut [TermTuple<'a>],
         current_substitution: &mut BTreeMap<QueryVariable, TermId>,
         callback: &mut impl FnMut(&BTreeMap<QueryVariable, TermId>),
     ) {
-        let colt_ids = &covers[0][if covers.len() == 1 { 1 } else { 0 }..];
+        let (head_section, other_sections) = section_colts.split_at_mut(1);
 
-        let mut index = 0;
+        let is_final_section = other_sections.is_empty();
 
-        loop {
-            if index >= colt_ids.len() {
-                Self::search_inner(bump, colts, &covers[1..], current_substitution, callback);
-                break;
-            }
+        let current_colts = &head_section[0];
+        let mut next_colts = other_sections.get_mut(0);
 
-            let colt_id = colt_ids[index];
+        let current_colt_ids = &section_colt_ids[0];
 
-            let colt_ref = &colts[&colt_id];
-            let colt = colt_ref.colt;
+        let current_subtuple = &mut subtuples[0];
 
-            let subtuple = TermTuple {
-                term_ids: colt.sub_schematics[0]
+        // Ignore the cover colt in case this is the final section. In that case, `.iter()` on the
+        // COLT will not force it, and using `.get(..)` on it while iterating will be UB. This is
+        // fine, since we don't need any subcolts after the final section
+        for colt_id in &current_colt_ids[if is_final_section { 1 } else { 0 }..] {
+            current_subtuple.term_ids.clear();
+
+            let colt = current_colts[colt_id];
+
+            current_subtuple.term_ids.extend(
+                colt.sub_schematics[0]
                     .indices()
-                    .map(|(variable, _)| current_substitution[&variable])
-                    .collect_in(bump),
-            };
+                    .map(|(variable, _)| current_substitution[&variable]),
+            );
 
             // SAFETY: When this is the final section of the plan, we ignore the first COLT
             // explicitly, as `new_colts` won't be used. Otherwise, this isn't the last section,
             // and thus forcing must've already happened in `iter()`, and this internal `force()`
             // is a no-op
-            if let Some(subcolt) = unsafe { colt.get(&subtuple, Some(Box::new(colt_ref.clone()))) }
-            {
-                colts.insert(colt_id, subcolt);
-                index += 1;
+            if let Some(subcolt) = unsafe { colt.get(current_subtuple) } {
+                if !is_final_section {
+                    next_colts.as_mut().unwrap().insert(*colt_id, subcolt);
+                }
             } else {
-                break;
+                return;
             }
         }
 
-        for &colt_id in &colt_ids[0..index] {
-            colts.insert(colt_id, *colts[&colt_id].parent.clone().unwrap());
-        }
+        Self::search_inner(
+            bump,
+            &mut section_colts[1..],
+            &section_colt_ids[1..],
+            &mut subtuples[1..],
+            current_substitution,
+            callback,
+        );
     }
 
     fn search_inner<'a>(
         bump: &'a Bump,
-        colts: &mut BTreeMap<ColtId, ColtRef<'_, '_, 'a>>,
-        covers: &[Vec<ColtId>],
+        section_colts: &mut [BTreeMap<ColtId, &Colt<'a>>],
+        section_colt_ids: &[Vec<ColtId>],
+        subtuples: &mut [TermTuple<'a>],
         current_substitution: &mut BTreeMap<QueryVariable, TermId>,
         callback: &mut impl FnMut(&BTreeMap<QueryVariable, TermId>),
     ) {
-        if covers.is_empty() {
+        let is_after_final_section = section_colts.is_empty();
+
+        if is_after_final_section {
             callback(current_substitution);
         } else {
-            let cover = colts[&covers[0][0]].colt;
+            let current_colts = &section_colts[0];
+            let current_colt_ids = &section_colt_ids[0];
+
+            let cover_colt_id = &current_colt_ids[0];
+            let cover = current_colts[cover_colt_id];
 
             // SAFETY: As shown below, `cover` won't be changed while it is being iterated, making `get` and `iter` safe
             let iter = unsafe { cover.iter() };
@@ -258,8 +270,9 @@ impl Database {
 
                         Self::resolution_attempt(
                             bump,
-                            colts,
-                            covers,
+                            section_colts,
+                            section_colt_ids,
+                            subtuples,
                             current_substitution,
                             callback,
                         );
@@ -276,8 +289,9 @@ impl Database {
 
                         Self::resolution_attempt(
                             bump,
-                            colts,
-                            covers,
+                            section_colts,
+                            section_colt_ids,
+                            subtuples,
                             current_substitution,
                             callback,
                         );
@@ -309,13 +323,24 @@ impl Database {
             })
             .collect::<BTreeMap<_, _>>();
 
+        let mut subtuples = vec![
+            TermTuple {
+                term_ids: bumpalo::collections::Vec::new_in(bump)
+            };
+            executable_query_plan.section_colt_ids.len()
+        ];
+
         Self::search_inner(
             bump,
-            &mut colts
-                .iter()
-                .map(|(colt_id, colt)| (*colt_id, ColtRef { colt, parent: None }))
-                .collect(),
-            &executable_query_plan.covers,
+            &mut vec![
+                colts
+                    .iter()
+                    .map(|(colt_id, colt)| (*colt_id, colt))
+                    .collect();
+                executable_query_plan.section_colt_ids.len()
+            ],
+            &executable_query_plan.section_colt_ids,
+            &mut subtuples,
             &mut BTreeMap::new(),
             callback,
         );

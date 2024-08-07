@@ -4,7 +4,6 @@ use std::{
 };
 
 pub use ekege_macros::term;
-use rustc_hash::FxHashSet;
 
 use crate::{id::Id, map::MapId};
 
@@ -38,7 +37,6 @@ pub(crate) struct Node<T> {
 #[derive(Debug)]
 pub(crate) struct TermTable<T> {
     nodes: Vec<Node<T>>,
-    pub(crate) canonical_ids: FxHashSet<TermId>,
 }
 
 impl<T> Index<TermId> for TermTable<T> {
@@ -62,10 +60,7 @@ pub struct UnifyResult {
 
 impl<T> TermTable<T> {
     pub(crate) fn new() -> Self {
-        Self {
-            nodes: vec![],
-            canonical_ids: FxHashSet::default(),
-        }
+        Self { nodes: vec![] }
     }
 
     fn parent_term_id(&self, term_id: TermId) -> Option<TermId> {
@@ -74,7 +69,7 @@ impl<T> TermTable<T> {
         (parent_id != term_id).then_some(parent_id)
     }
 
-    pub(crate) fn insert_flat_term(&mut self, value: T) -> TermId {
+    pub(crate) fn insert_term(&mut self, value: T) -> TermId {
         let term_id = Id(self.nodes.len());
 
         self.nodes.push(Node {
@@ -82,8 +77,6 @@ impl<T> TermTable<T> {
             rank: 0,
             value,
         });
-
-        self.canonical_ids.insert(term_id);
 
         term_id
     }
@@ -108,12 +101,8 @@ impl<T> TermTable<T> {
         }
 
         let [larger_root_id, smaller_root_id] = if self[root_id_a].rank > self[root_id_b].rank {
-            self.canonical_ids.remove(&root_id_b);
-
             [root_id_a, root_id_b]
         } else {
-            self.canonical_ids.remove(&root_id_a);
-
             [root_id_b, root_id_a]
         };
 

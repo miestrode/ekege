@@ -127,7 +127,7 @@ pub struct QueryPlan {
 
 pub(crate) struct ExecutableQueryPlan {
     pub(crate) colt_schematics: BTreeMap<ColtId, ColtSchematic>,
-    pub(crate) covers: Vec<Vec<ColtId>>,
+    pub(crate) section_colt_ids: Vec<Vec<ColtId>>,
 }
 
 impl ExecutableQueryPlan {
@@ -161,7 +161,7 @@ impl QueryPlan {
 
         ExecutableQueryPlan {
             colt_schematics,
-            covers: self
+            section_colt_ids: self
                 .sections
                 .iter()
                 .map(|section| {
