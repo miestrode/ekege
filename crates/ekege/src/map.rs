@@ -4,7 +4,6 @@ use std::{
 };
 
 use indexmap::map::Entry;
-#[allow(clippy::disallowed_types)]
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 
@@ -15,7 +14,6 @@ use crate::{
 
 pub use ekege_macros::map_signature;
 
-#[allow(clippy::disallowed_types)]
 pub(crate) type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
 
 pub type TypeId = Id;
