@@ -56,7 +56,7 @@ Ekege doesn't have any built-in data types, but yet we can still represent many 
 
 ## Installation
 
-Once Ekege is more feature complete, it will be available on crates.io. Nevertheless, Ekege requires no external dependencies.
+Once Ekege is more feature complete, it will be available on crates.io. Nevertheless, Installing Ekege will require no external dependencies.
 
 ## Documentation
 
