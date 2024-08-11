@@ -28,7 +28,7 @@ let unit = database.new_type(); // Even `()` is a user-defined data type
 let path = database.new_map(map_signature! { (node, node) -> unit });
 
 // Rules describe how to extend the database with more information, based on the data in it.
-// Note that this doesn't mean that after applying a rule, the database is no smaller, due to unification
+// After applying a rule, the database might be smaller, due to unification
 let rules = [rule! { path('x, 'y), path('y, 'z) -> path('x, 'z) }];
 
 // Constants are parameterless maps, returning some type, thus having only one instance
