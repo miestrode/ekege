@@ -10,7 +10,7 @@ Ekege is an E-graph library for Rust. Essentially, a simpler version of [Egglog]
 
 ## Special thanks
 
-This work builds upon the fantastic work of the many computer scientists, software engineers, and contributors behind Egglog and [Egg](https://github.com/egraphs-good/egg). Additionally, this work is based on ["Free Join"](https://doi.org/10.1145/3589295), a fast join algorithm unifying the Generic Join and Binary Join algorithms, by using a general framework for representing joining plans.
+This library builds upon the fantastic work of the many computer scientists, software engineers, and contributors behind Egglog and [Egg](https://github.com/egraphs-good/egg). Additionally, this work is based on ["Free Join"](https://doi.org/10.1145/3589295), a fast join algorithm unifying the Generic Join and Binary Join algorithms, by using a general framework for representing joining plans.
 
 ## Example: Node connectedness
 
