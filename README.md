@@ -27,7 +27,8 @@ let unit = database.new_type(); // Even `()` is a user-defined data type
 // Maps allow the formation of terms, from simpler terms
 let path = database.new_map(map_signature! { (node, node) -> unit });
 
-// Rules describe how to modify the database, based on the data in it
+// Rules describe how to extend the database with more information, based on the data in it.
+// After applying a rule, the database might be smaller, due to unification
 let rules = [rule! { path('x, 'y), path('y, 'z) -> path('x, 'z) }];
 
 // Constants are parameterless maps, returning some type, thus having only one instance
@@ -55,7 +56,7 @@ Ekege doesn't have any built-in data types, but yet we can still represent many 
 
 ## Installation
 
-Once Ekege is more feature complete, it will be available on crates.io. Nevertheless, Ekege requires no external dependencies.
+Once Ekege is more feature complete, it will be available on crates.io. Nevertheless, Installing Ekege will require no external dependencies.
 
 ## Documentation
 
