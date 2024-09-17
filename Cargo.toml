@@ -24,6 +24,9 @@ proc-macro-crate = "3.1.0"
 criterion = { version = "0.5.1", features = ["html_reports"] }
 rand = "0.8.5"
 
+[workspace.lints.rust]
+missing_docs = "warn"
+
 [profile.release]
 lto = true
 codegen-units = 1

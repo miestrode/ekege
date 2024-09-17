@@ -5,8 +5,11 @@ edition = "2021"
 description = "A different approach to an E-graph library"
 authors = ["Yoav Grimland <miestrode@proton.me>"]
 
+[lints]
+workspace = true
+
 [dependencies]
-# Workspace members 
+# Workspace members
 ekege-macros.workspace = true
 
 # Regular dependencies

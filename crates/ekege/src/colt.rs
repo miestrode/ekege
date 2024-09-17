@@ -174,8 +174,8 @@ impl<'a> Colt<'a> {
             return Either::Left(separated_map_terms);
         }
 
-        // SAFTEY: We assume storage isn't already borrowed. When `map` is `Some`, `force` is a
-        // no-op
+        // SAFTEY: We assume storage isn't already borrowed. When `map` is `Some`,
+        // `force` is a no-op
         unsafe { self.force() };
 
         Either::Right(map.unwrap().keys())

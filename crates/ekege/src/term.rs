@@ -1,20 +1,128 @@
+//! Items related to the terms used in a [database](ekege::database::Database).
 use std::{
     collections::BTreeMap,
     ops::{Index, IndexMut},
 };
 
+use ekege::discouraged;
+/// Creates a new [tree term](TreeTerm). The tree term stores other, nested tree terms, and [term ID](TermId)s.
+///
+/// See [`TreeTerm`] for more information.
+///
+/// # Examples
+///
+/// Creating a term for a boolean expression and adding it to the database:
+///
+/// ```rust
+/// # use ekege::{rule::rule, database::Database, map::map_signature, term::term};
+/// #
+/// let mut database = Database::new();
+///
+/// let boolean = database.new_type();
+///
+/// let or = database.new_map(map_signature! { (boolean, boolean) -> boolean });
+/// let not = database.new_map(map_signature! { (boolean,) -> boolean });
+///
+/// let x = database.new_constant(boolean);
+/// let y = database.new_constant(boolean);
+/// let z = database.new_constant(boolean);
+///
+/// let boolean_expression = term! { or(x, or(y, not(z))) };
+/// database.new_term(&boolean_expression);
+/// ```
 pub use ekege_macros::term;
 
 use crate::{id::Id, map::MapId};
 
+/// An ID type to refer to terms, up to equivalence.
+///
+/// See [`database`](ekege::database) for more information.
 pub type TermId = Id;
 
+/// An item in a [tree term](TreeTerm). A tree term is made out of [term ID](TermId)s and other nested tree terms.
+///
+/// See [`TreeTerm`] for more information.
+///
+#[doc = discouraged!(ekege::term::term)]
 #[derive(Clone)]
 pub enum TreeTermInput {
+    /// A [tree term](TreeTerm) to be used in another tree term.
+    ///
+    /// See [`TreeTerm`] for more information.
+    ///
+    #[doc = discouraged!(ekege::term::term)]
     TreeTerm(TreeTerm),
+    /// A [term ID](TermId) to be used in another tree term.
+    ///
+    /// See [`TreeTerm`] for more information.
+    ///
+    #[doc = discouraged!(ekege::term::term)]
     TermId(TermId),
 }
 
+/// A representation of an uninterpreted term, made of [term ID](TermId)s and other nested terms.
+///
+/// See [`database`](ekege::database) for more information.
+///
+#[doc = discouraged!(ekege::term::term)]
+///
+/// # Examples
+///
+/// Consider the term `multiply(a, add(b, c))`. It corresponds to the expression `a * (b + c)`.
+/// Here, `a`, `b`, and `c` are all term IDs, and thus represent many equivalent terms. Despite this,
+/// the resulting term still has noticeable structure, as these term IDs are combined to create a larger term.
+///
+/// Using [`TreeTerm`], we would represent this term as:
+///
+/// ```rust
+/// # use ekege::{database::Database, map::map_signature, term::{TreeTerm, TreeTermInput}};
+/// #
+/// let mut database = Database::new();
+///
+/// let number = database.new_type();
+///
+/// let add = database.new_map(map_signature! { (number, number) -> number });
+/// let multiply = database.new_map(map_signature! { (number, number) -> number });
+///
+/// let a = database.new_constant(number);
+/// let b = database.new_constant(number);
+/// let c = database.new_constant(number);
+///
+/// TreeTerm::new(
+///     multiply, // Map ID for `multiply`
+///     [
+///         TreeTermInput::TermId(a), // Term ID for `a`
+///         TreeTermInput::TreeTerm(TreeTerm::new(
+///             add, // Map ID for `add`
+///             [
+///                 TreeTermInput::TermId(b), // Term ID for `b`
+///                 TreeTermInput::TermId(c), // Term ID for `c`
+///             ]
+///         )),
+///     ]
+/// );
+/// ```
+///
+/// Alternatively, we can represent this term more idiomatically by using the [`term!`] macro:
+///
+/// ```rust
+/// # use ekege::{database::Database, map::map_signature, term::{TreeTerm, TreeTermInput, term}};
+/// #
+/// let mut database = Database::new();
+///
+/// let number = database.new_type();
+///
+/// let add = database.new_map(map_signature! { (number, number) -> number });
+/// let multiply = database.new_map(map_signature! { (number, number) -> number });
+///
+/// let a = database.new_constant(number);
+/// let b = database.new_constant(number);
+/// let c = database.new_constant(number);
+///
+/// term! { multiply(a, add(b, c)) };
+/// ```
+///
+/// This expands to the same output as when using [`TreeTerm`] directly, but is simpler to understand and change.
 #[derive(Clone)]
 pub struct TreeTerm {
     pub(crate) map_id: MapId,
@@ -22,8 +130,15 @@ pub struct TreeTerm {
 }
 
 impl TreeTerm {
-    pub fn new(map_id: MapId, inputs: Vec<TreeTermInput>) -> Self {
-        Self { map_id, inputs }
+    /// Creates a new [tree term](TreeTerm), existing in a map identified by a [map ID](MapId), and taking
+    /// a collection of [inputs](TreeTermInput).
+    ///
+    #[doc = discouraged!(ekege::term::term)]
+    pub fn new(map_id: MapId, inputs: impl IntoIterator<Item = TreeTermInput>) -> Self {
+        Self {
+            map_id,
+            inputs: inputs.into_iter().collect(),
+        }
     }
 }
 
@@ -43,19 +158,19 @@ impl<T> Index<TermId> for TermTable<T> {
     type Output = Node<T>;
 
     fn index(&self, index: TermId) -> &Self::Output {
-        &self.nodes[index.0]
+        &self.nodes[index.inner()]
     }
 }
 
 impl<T> IndexMut<TermId> for TermTable<T> {
     fn index_mut(&mut self, index: TermId) -> &mut Self::Output {
-        &mut self.nodes[index.0]
+        &mut self.nodes[index.inner()]
     }
 }
 
-pub struct UnifyResult {
-    pub old_term_id: TermId,
-    pub new_term_id: TermId,
+pub(crate) struct UnifyResult {
+    pub(crate) old_term_id: TermId,
+    pub(crate) new_term_id: TermId,
 }
 
 impl<T> TermTable<T> {
@@ -70,7 +185,7 @@ impl<T> TermTable<T> {
     }
 
     pub(crate) fn insert_term(&mut self, value: T) -> TermId {
-        let term_id = Id(self.nodes.len());
+        let term_id = Id::new(self.nodes.len());
 
         self.nodes.push(Node {
             parent_term_id: term_id, // No parent so term id is self

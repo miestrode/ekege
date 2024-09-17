@@ -1,10 +1,11 @@
+//! Items related to the maps used in a [database](ekege::database::Database).
 use std::{
     cell::UnsafeCell,
     ops::{Deref, Range},
 };
 
-use indexmap::map::Entry;
-use indexmap::IndexMap;
+pub use ekege_macros::map_signature;
+use indexmap::{map::Entry, IndexMap};
 use rustc_hash::FxBuildHasher;
 
 use crate::{
@@ -12,17 +13,39 @@ use crate::{
     term::{TermId, TermTuple},
 };
 
-pub use ekege_macros::map_signature;
-
 pub(crate) type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
 
+/// An ID to identify a type in a [database](ekege::database::Database).
 pub type TypeId = Id;
+/// An ID to identify a map in a [database](ekege::database::Database).
 pub type MapId = Id;
 
 #[derive(Debug)]
+/// The signature of a map contains the [type ID](TypeId)s each member's terms must have, and the type ID each
+/// term in the map will have.
 pub struct MapSignature {
-    pub input_type_ids: Vec<TypeId>,
-    pub output_type_id: TypeId,
+    input_type_ids: Vec<TypeId>,
+    output_type_id: TypeId,
+}
+
+impl MapSignature {
+    /// Creates a new [signature](MapSignature) with the given input [type ID](TypeId)s and the
+    /// output type ID. It is recommended you use the [`map_signature!`] macro for creating a new
+    /// map signature, as using it is more readable.
+    pub fn new(input_type_ids: impl IntoIterator<Item = TypeId>, output_type_id: TypeId) -> Self {
+        Self {
+            input_type_ids: input_type_ids.into_iter().collect(),
+            output_type_id,
+        }
+    }
+
+    pub(crate) fn input_type_ids(&self) -> &[Id] {
+        &self.input_type_ids
+    }
+
+    pub(crate) fn output_type_id(&self) -> Id {
+        self.output_type_id
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -60,8 +83,8 @@ impl MapTerms {
     }
 
     pub(crate) fn get_by_index(&self, index: usize) -> Option<SeparatedMapTerm<'_>> {
-        // SAFETY: The references yielded, are unrelated to the `IndexMap`, but to a stable
-        // location, kind of like in the `elsa` crate
+        // SAFETY: The references yielded, are unrelated to the `IndexMap`, but to a
+        // stable location, kind of like in the `elsa` crate
         unsafe { &*self.map_terms.get() }
             .get_index(index)
             .map(|(term_tuple, term_id)| SeparatedMapTerm {
@@ -96,7 +119,7 @@ impl MapTerms {
     }
 }
 
-pub struct Map {
+pub(crate) struct Map {
     pub(crate) map_terms: MapTerms,
     pub(crate) signature: MapSignature,
 }

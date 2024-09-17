@@ -1,12 +1,12 @@
-use std::collections::BTreeMap;
-
 use crate::{
     colt::Captures,
     id::Id,
     map::{MapId, SeparatedMapTerm},
-    rule::QueryVariable,
     term::{TermId, TermTable},
 };
+use std::collections::BTreeMap;
+
+use super::rule::QueryVariable;
 
 pub(crate) type ColtId = Id;
 
@@ -25,7 +25,6 @@ pub struct SchematicAtom {
 #[derive(Debug)]
 pub struct SubMapTerm {
     pub map_id: MapId,
-    pub new_terms_required: bool,
     pub colt_id: ColtId,
     pub atoms: Vec<SchematicAtom>,
 }
@@ -91,7 +90,8 @@ impl SubMapTermSchematic {
     }
 
     // Given a tuple and the schematic, is that tuple valid?
-    // For example, for schematic (0: X, 1: Y, 2: X) and tuple (3, 4, 5), the tuple is invalid, as 3 != 5
+    // For example, for schematic (0: X, 1: Y, 2: X) and tuple (3, 4, 5), the tuple
+    // is invalid, as 3 != 5
     pub(crate) fn requirements_satisfied(&self, separated_map_term: SeparatedMapTerm<'_>) -> bool {
         self.term_id_requirements_satisfied(separated_map_term)
             && self.equality_requirements_satisfied(separated_map_term)
@@ -121,8 +121,9 @@ impl ColtSchematic {
 }
 
 #[derive(Debug)]
-pub struct QueryPlan {
-    pub sections: Vec<QueryPlanSection>,
+pub(crate) struct QueryPlan {
+    pub(crate) colt_ids: usize,
+    pub(crate) sections: Vec<QueryPlanSection>,
 }
 
 pub(crate) struct ExecutableQueryPlan {
@@ -140,7 +141,11 @@ impl ExecutableQueryPlan {
 }
 
 impl QueryPlan {
-    pub(crate) fn to_executable(&self) -> ExecutableQueryPlan {
+    // The colt ID to require new term is passed to allow for semi-naive evaluation
+    pub(crate) fn to_executable(
+        &self,
+        colt_id_to_require_new_terms: ColtId,
+    ) -> ExecutableQueryPlan {
         let mut colt_schematics = BTreeMap::new();
 
         for section in &self.sections {
@@ -150,7 +155,7 @@ impl QueryPlan {
                     .or_insert(ColtSchematic {
                         map_id: sub_map_term.map_id,
                         sub_schematics: Vec::new(),
-                        new_terms_required: sub_map_term.new_terms_required,
+                        new_terms_required: false,
                     })
                     .sub_schematics
                     .push(SubMapTermSchematic::from_schematic_atoms(
@@ -158,6 +163,11 @@ impl QueryPlan {
                     ));
             }
         }
+
+        colt_schematics
+            .get_mut(&colt_id_to_require_new_terms)
+            .unwrap()
+            .new_terms_required = true;
 
         ExecutableQueryPlan {
             colt_schematics,

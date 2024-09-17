@@ -1,15 +1,18 @@
+#![allow(missing_docs)]
 use std::{env, sync::LazyLock};
 
+use discouraged::Discouraged;
 use equivalence::Equivalence;
 use map::MapSignature;
 use proc_macro2::Span;
 use proc_macro_crate::{crate_name, FoundCrate};
 use quote::{ToTokens, TokenStreamExt};
 use rewrite::Rewrite;
-use rule::{FlatRule, TreeRule};
+use rule::TreeRule;
 use syn::{parse_macro_input, Ident};
 use term::TreeTerm;
 
+mod discouraged;
 mod equivalence;
 mod map;
 mod rewrite;
@@ -58,7 +61,7 @@ pub fn map_signature(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream
 pub fn rule(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(tokens as TreeRule);
 
-    proc_macro::TokenStream::from(FlatRule::from(&input).to_token_stream())
+    proc_macro::TokenStream::from(input.to_token_stream())
 }
 
 #[proc_macro]
@@ -71,6 +74,28 @@ pub fn rewrite(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
 #[proc_macro]
 pub fn equivalence(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(tokens as Equivalence);
+
+    proc_macro::TokenStream::from(input.to_token_stream())
+}
+
+/// Creates a `rustdoc` admonition string for discouraged-use items,
+/// which should instead be used indirectly, via macros.
+///
+/// The macro takes as a single parameter, a path to an item. This item should be
+/// the macro users can use to create the item.
+///
+/// # Examples
+///
+/// To use an admonition with the macro [`rule!`] in documentation, we can use:
+///
+/// ```rust
+/// #[doc = discouraged!(ekege::rule::rule)]
+/// ```
+///
+/// On some item.
+#[proc_macro]
+pub fn discouraged(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = parse_macro_input!(tokens as Discouraged);
 
     proc_macro::TokenStream::from(input.to_token_stream())
 }

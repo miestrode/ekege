@@ -1,7 +1,5 @@
-use std::collections::BTreeMap;
-
 use proc_macro2::Span;
-use quote::{quote, ToTokens, TokenStreamExt};
+use quote::{quote, ToTokens};
 use syn::{
     parenthesized,
     parse::{Parse, ParseStream},
@@ -10,47 +8,63 @@ use syn::{
 
 use crate::CRATE_ROOT;
 
-#[derive(PartialOrd, Ord, Clone, Copy, Hash, PartialEq, Eq)]
-struct Id(usize);
+#[derive(Clone)]
+pub(crate) struct TreeTermPattern {
+    map_id: Ident,
+    inputs: Vec<TreeTermPatternInput>,
+}
 
-impl ToTokens for Id {
+impl Parse for TreeTermPattern {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let map_id = input.parse::<Ident>()?;
+
+        let content;
+        parenthesized!(content in input);
+
+        let inputs = content
+            .parse_terminated(TreeTermPatternInput::parse, Token![,])?
+            .into_iter()
+            .collect();
+
+        Ok(Self { map_id, inputs })
+    }
+}
+
+impl ToTokens for TreeTermPattern {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let id = self.0;
+        let map_id = &self.map_id;
+        let inputs = &self.inputs;
 
-        tokens.append_all(quote! { #CRATE_ROOT::id::Id(#id) });
+        tokens.extend(quote! {
+            #CRATE_ROOT::rule::TreeTermPattern::new(#map_id, [#(#inputs),*])
+        })
     }
 }
-
-type ColtId = Id;
-type QueryVariable = Id;
-
-struct QueryVariableTable {
-    variables: usize,
-    name_variable_table: BTreeMap<String, QueryVariable>,
+pub(crate) struct TreeQuery {
+    pub(crate) term_patterns: Vec<TreeTermPattern>,
 }
 
-impl QueryVariableTable {
-    fn new() -> Self {
-        Self {
-            variables: 0,
-            name_variable_table: BTreeMap::new(),
+impl Parse for TreeQuery {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut term_patterns = Vec::new();
+
+        while input.peek(syn::Ident) {
+            term_patterns.push(input.parse::<TreeTermPattern>()?);
+
+            let _ = input.parse::<Token![,]>();
         }
+
+        Ok(Self { term_patterns })
     }
 }
 
-impl QueryVariableTable {
-    fn get_or_create_query_variable(&mut self, query_variable: String) -> QueryVariable {
-        *self
-            .name_variable_table
-            .entry(query_variable)
-            .or_insert_with(|| Self::create_nameless_query_variable(&mut self.variables))
-    }
+impl ToTokens for TreeQuery {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let term_patterns = &self.term_patterns;
 
-    fn create_nameless_query_variable(query_variables: &mut usize) -> QueryVariable {
-        let new_query_variable = *query_variables;
-        *query_variables += 1;
-
-        Id(new_query_variable)
+        tokens.extend(quote! {
+            ekege::rule::TreeQuery::new([#(#term_patterns),*])
+        })
     }
 }
 
@@ -64,7 +78,7 @@ pub(crate) enum TreeTermPatternInput {
 impl Parse for TreeTermPatternInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(if input.peek(Lifetime) {
-            Self::QueryVariable(input.parse::<Lifetime>()?.to_string())
+            Self::QueryVariable(input.parse::<Lifetime>()?.ident.to_string())
         } else if input.peek2(token::Paren) {
             Self::TreeTermPattern(input.parse::<TreeTermPattern>()?)
         } else {
@@ -73,120 +87,19 @@ impl Parse for TreeTermPatternInput {
     }
 }
 
-impl TreeTermPatternInput {
-    fn extend_flat_rule_payloads(
-        &self,
-        query_variable_table: &mut QueryVariableTable,
-        current_flat_term_index: &mut usize,
-        flat_rule_payloads: &mut Vec<FlatRulePayload>,
-    ) -> FlatTermPatternInput {
-        match self {
-            TreeTermPatternInput::QueryVariable(query_variable) => {
-                FlatTermPatternInput::QueryVariable(
-                    query_variable_table.get_or_create_query_variable(query_variable.clone()),
-                )
+impl ToTokens for TreeTermPatternInput {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        tokens.extend(match self {
+            TreeTermPatternInput::QueryVariable(variable) => {
+                quote! { #CRATE_ROOT::rule::TreeTermPatternInput::new_query_variable(#variable) }
             }
-            TreeTermPatternInput::TermId(term_id) => FlatTermPatternInput::TermId(term_id.clone()),
-            TreeTermPatternInput::TreeTermPattern(tree_term_pattern) => {
-                FlatTermPatternInput::PreviouslyCreatedFlatTermIndex(
-                    TreeRulePayload::TermCreation(tree_term_pattern.clone())
-                        .extend_flat_rule_payloads(
-                            query_variable_table,
-                            current_flat_term_index,
-                            flat_rule_payloads,
-                        )
-                        .unwrap(),
-                )
+            TreeTermPatternInput::TermId(term_id) => {
+                quote! { #CRATE_ROOT::rule::TreeTermPatternInput::new_term_id(#term_id) }
             }
-        }
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct TreeTermPattern {
-    map_id: Ident,
-    new_terms_required: bool,
-    inputs: Vec<TreeTermPatternInput>,
-}
-
-impl Parse for TreeTermPattern {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let map_id = input.parse::<Ident>()?;
-        
-        let new_terms_required = input.parse::<Option<Token![!]>>()?.is_some();
-
-        let content;
-        parenthesized!(content in input);
-
-        let inputs = content
-            .parse_terminated(TreeTermPatternInput::parse, Token![,])?
-            .into_iter()
-            .collect();
-
-        Ok(Self { map_id, new_terms_required, inputs })
-    }
-}
-
-impl TreeTermPattern {
-    fn extend_flat_map_term_patterns(
-        &self,
-        query_variable_table: &mut QueryVariableTable,
-        flat_map_term_patterns: &mut Vec<FlatMapTermPattern>,
-    ) -> QueryVariable {
-        let mut inputs = self
-                .inputs
-                .iter()
-                .map(|input| match input {
-                    TreeTermPatternInput::QueryVariable(variable) => {
-                        FlatMapTermPatternInput::QueryVariable(
-                            query_variable_table.get_or_create_query_variable(variable.clone()),
-                        )
-                    }
-                    TreeTermPatternInput::TermId(term_id) => {
-                        FlatMapTermPatternInput::TermId(term_id.clone())
-                    }
-                    TreeTermPatternInput::TreeTermPattern(tree_term_pattern) => {
-                        FlatMapTermPatternInput::QueryVariable(
-                            tree_term_pattern.extend_flat_map_term_patterns(
-                                query_variable_table,
-                                flat_map_term_patterns,
-                            ),
-                        )
-                    }
-                })
-                .collect::<Vec<_>>();
-
-        let root_flat_map_term_pattern_query_variable = QueryVariableTable::create_nameless_query_variable(&mut query_variable_table.variables);
-
-        inputs.push(FlatMapTermPatternInput::QueryVariable(root_flat_map_term_pattern_query_variable));
-
-        let root_flat_map_term_pattern = FlatMapTermPattern {
-            map_id: self.map_id.clone(),
-            new_terms_required: self.new_terms_required,
-            inputs,
-        };
-
-        flat_map_term_patterns.push(root_flat_map_term_pattern);
-
-        root_flat_map_term_pattern_query_variable
-    }
-}
-
-pub(crate) struct TreeQuery {
-    pub(crate) tree_term_patterns: Vec<TreeTermPattern>,
-}
-
-impl Parse for TreeQuery {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut tree_term_patterns = Vec::new();
-
-        while input.peek(syn::Ident) {
-            tree_term_patterns.push(input.parse::<TreeTermPattern>()?);
-
-            let _ = input.parse::<Token![,]>();
-        }
-
-        Ok(Self { tree_term_patterns })
+            TreeTermPatternInput::TreeTermPattern(pattern) => {
+                quote! { #CRATE_ROOT::rule::TreeTermPatternInput::new_tree_term_pattern(#pattern) }
+            }
+        });
     }
 }
 
@@ -219,131 +132,22 @@ impl Parse for TreeRulePayload {
     }
 }
 
-impl TreeRulePayload {
-    fn extend_flat_rule_payloads(
-        &self,
-        query_variable_table: &mut QueryVariableTable,
-        current_flat_term_index: &mut usize,
-        flat_rule_payloads: &mut Vec<FlatRulePayload>,
-    ) -> Option<usize> {
-        match self {
-            TreeRulePayload::TermCreation(tree_term_pattern) => {
-                let root_flat_term_pattern = FlatTermPattern {
-                    map_id: tree_term_pattern.map_id.clone(),
-                    inputs: tree_term_pattern
-                        .inputs
-                        .iter()
-                        .map(|input| match input {
-                            TreeTermPatternInput::QueryVariable(variable) => {
-                                FlatTermPatternInput::QueryVariable(
-                                    query_variable_table.get_or_create_query_variable(variable.clone()),
-                                )
-                            }
-                            TreeTermPatternInput::TermId(term_id) => {
-                                FlatTermPatternInput::TermId(term_id.clone())
-                            }
-                            TreeTermPatternInput::TreeTermPattern(tree_term_pattern) => {
-                                FlatTermPatternInput::PreviouslyCreatedFlatTermIndex(
-                                    TreeRulePayload::TermCreation(tree_term_pattern.clone())
-                                        .extend_flat_rule_payloads(
-                                            query_variable_table,
-                                            current_flat_term_index,
-                                            flat_rule_payloads,
-                                        )
-                                        .unwrap(),
-                                )
-                            }
-                        })
-                        .collect(),
-                };
-
-                flat_rule_payloads.push(FlatRulePayload::Creation(root_flat_term_pattern));
-
-                let root_flat_term_index = *current_flat_term_index;
-                *current_flat_term_index += 1;
-
-                Some(root_flat_term_index)
-            }
-            TreeRulePayload::Union(tree_term_pattern_input_a, tree_term_pattern_input_b) => {
-                let root_flat_term_pattern_input_a = tree_term_pattern_input_a
-                    .extend_flat_rule_payloads(
-                        query_variable_table,
-                        current_flat_term_index,
-                        flat_rule_payloads,
-                    );
-
-                let root_flat_term_pattern_input_b = tree_term_pattern_input_b
-                    .extend_flat_rule_payloads(
-                        query_variable_table,
-                        current_flat_term_index,
-                        flat_rule_payloads,
-                    );
-
-                flat_rule_payloads.push(FlatRulePayload::Union(
-                    root_flat_term_pattern_input_a,
-                    root_flat_term_pattern_input_b,
-                ));
-
-                None
-            }
-        }
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct TreeTermPatternInputs {
-    pub(crate) rule_terms: Vec<TreeTermPatternInput>,
-}
-
-impl Parse for TreeTermPatternInputs {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut rule_terms = Vec::new();
-
-        while input.peek(syn::Ident) || input.peek(syn::Lifetime) {
-            rule_terms.push(input.parse::<TreeTermPatternInput>()?);
-
-            let _ = input.parse::<Token![,]>();
-        }
-
-        Ok(Self { rule_terms })
+impl ToTokens for TreeRulePayload {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        tokens.extend(match self {
+            TreeRulePayload::TermCreation(term_pattern) => quote! {
+                #CRATE_ROOT::rule::TreeRulePayload::new_term_creation(#term_pattern)
+            },
+            TreeRulePayload::Union(input_a, input_b) => quote! {
+                #CRATE_ROOT::rule::TreeRulePayload::new_union(#input_a, #input_b)
+            },
+        });
     }
 }
 
 pub(crate) struct TreeRule {
-    pub(crate) tree_query: TreeQuery,
-    pub(crate) tree_rule_payloads: Vec<TreeRulePayload>,
-}
-
-impl TreeRule {
-    pub(crate) fn new_rewrite(
-        rule_terms: TreeTermPatternInputs,
-        rewrites: TreeTermPatternInputs,
-    ) -> Self {
-        TreeRule {
-            tree_rule_payloads: rule_terms
-                .rule_terms
-                .iter()
-                .cloned()
-                .zip(rewrites.rule_terms)
-                .map(|(before_pattern, after_pattern)| {
-                    TreeRulePayload::Union(before_pattern, after_pattern)
-                })
-                .collect(),
-            tree_query: TreeQuery {
-                tree_term_patterns: rule_terms
-                    .rule_terms
-                    .into_iter()
-                    .filter_map(|rule_term| {
-                        if let TreeTermPatternInput::TreeTermPattern(map_pattern) = rule_term {
-                            Some(map_pattern)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect(),
-            },
-        }
-    }
+    pub(crate) query: TreeQuery,
+    pub(crate) payloads: Vec<TreeRulePayload>,
 }
 
 impl Parse for TreeRule {
@@ -357,293 +161,17 @@ impl Parse for TreeRule {
             .into_iter()
             .collect();
 
-        Ok(Self {
-            tree_query: query,
-            tree_rule_payloads: payloads,
-        })
+        Ok(Self { query, payloads })
     }
 }
 
-enum FlatMapTermPatternInput {
-    TermId(Ident),
-    QueryVariable(QueryVariable),
-}
-
-struct FlatMapTermPattern {
-    map_id: Ident,
-    new_terms_required: bool,
-    inputs: Vec<FlatMapTermPatternInput>,
-}
-
-struct FlatQuery {
-    map_term_patterns: Vec<FlatMapTermPattern>,
-}
-
-#[derive(Clone)]
-enum SchematicAtomInner {
-    Variable(QueryVariable),
-    TermId(Ident),
-}
-
-impl ToTokens for SchematicAtomInner {
+impl ToTokens for TreeRule {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        tokens.append_all(match self {
-            SchematicAtomInner::Variable(variable) => quote! {
-                #CRATE_ROOT::plan::SchematicAtomInner::Variable(#variable)
-            },
-            SchematicAtomInner::TermId(term_id) => quote! {
-                #CRATE_ROOT::plan::SchematicAtomInner::TermId(#term_id)
-            },
-        });
-    }
-}
+        let query = &self.query;
+        let payloads = &self.payloads;
 
-struct SchematicAtom {
-    tuple_index: usize,
-    inner: SchematicAtomInner,
-}
-
-impl ToTokens for SchematicAtom {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let tuple_index = &self.tuple_index;
-        let inner = &self.inner;
-
-        tokens.append_all(quote! {
-            #CRATE_ROOT::plan::SchematicAtom {
-                tuple_index: #tuple_index,
-                inner: #inner,
-            }
-        });
-    }
-}
-
-struct SubMapTerm {
-    map_id: Ident,
-    new_terms_required: bool,
-    colt_id: ColtId,
-    atoms: Vec<SchematicAtom>,
-}
-
-impl ToTokens for SubMapTerm {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let map_id = &self.map_id;
-        let new_terms_required = self.new_terms_required;
-        let colt_id = &self.colt_id;
-        let atoms = &self.atoms;
-
-        tokens.append_all(quote! {
-            #CRATE_ROOT::plan::SubMapTerm {
-                map_id: #map_id,
-                new_terms_required: #new_terms_required,
-                colt_id: #colt_id,
-                atoms: vec![#(#atoms),*],
-            }
-        });
-    }
-}
-
-struct QueryPlanSection {
-    sub_map_terms: Vec<SubMapTerm>,
-}
-
-impl ToTokens for QueryPlanSection {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let sub_map_terms = &self.sub_map_terms;
-
-        tokens.append_all(quote! {
-            #CRATE_ROOT::plan::QueryPlanSection {
-                sub_map_terms: vec![#(#sub_map_terms),*],
-            }
-        });
-    }
-}
-
-pub struct QueryPlan {
-    sections: Vec<QueryPlanSection>,
-}
-
-impl ToTokens for QueryPlan {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let sections = &self.sections;
-
-        tokens.append_all(quote! {
-            #CRATE_ROOT::plan::QueryPlan {
-                sections: vec![#(#sections),*],
-            }
-        });
-    }
-}
-
-impl From<FlatQuery> for QueryPlan {
-    fn from(query: FlatQuery) -> Self {
-        let mut plan_sections = Vec::new();
-
-        let mut variable_inclusion_map = BTreeMap::new();
-        let mut pattern_constant_atoms = BTreeMap::new();
-
-        for (pattern_index, pattern) in query.map_term_patterns.iter().enumerate() {
-            for (tuple_index, input) in pattern.inputs.iter().enumerate() {
-                match input {
-                    FlatMapTermPatternInput::QueryVariable(variable) => {
-                        variable_inclusion_map
-                            .entry(*variable)
-                            .or_insert(Vec::new())
-                            .push((pattern_index, tuple_index));
-                    }
-                    FlatMapTermPatternInput::TermId(term_id) => {
-                        pattern_constant_atoms
-                            .entry(pattern_index)
-                            .or_insert(Vec::new())
-                            .push(SchematicAtom {
-                                tuple_index,
-                                inner: SchematicAtomInner::TermId(term_id.clone()),
-                            });
-                    }
-                }
-            }
-        }
-
-        for pattern in &query.map_term_patterns {
-            let mut pattern_index_variables = BTreeMap::new();
-
-            for (variable, relevant_pattern_indices) in pattern.inputs.iter().filter_map(|input| {
-                if let FlatMapTermPatternInput::QueryVariable(variable) = input {
-                    variable_inclusion_map
-                        .remove(variable)
-                        .map(|relevant_pattern_indices| (variable, relevant_pattern_indices))
-                } else {
-                    None
-                }
-            }) {
-                for (pattern_index, tuple_index) in relevant_pattern_indices {
-                    pattern_index_variables
-                        .entry(pattern_index)
-                        .or_insert(SubMapTerm {
-                            colt_id: Id(pattern_index),
-                            map_id: query.map_term_patterns[pattern_index].map_id.clone(),
-                            atoms: pattern_constant_atoms
-                                .remove(&pattern_index)
-                                .unwrap_or(Vec::new()),
-                            new_terms_required: query.map_term_patterns[pattern_index].new_terms_required,
-                        })
-                        .atoms
-                        .push(SchematicAtom {
-                            tuple_index,
-                            inner: SchematicAtomInner::Variable(*variable),
-                        });
-                }
-            }
-
-            plan_sections.push(QueryPlanSection {
-                sub_map_terms: pattern_index_variables.into_values().collect(),
-            });
-        }
-
-        QueryPlan {
-            sections: plan_sections,
-        }
-    }
-}
-
-enum FlatTermPatternInput {
-    TermId(Ident),
-    QueryVariable(QueryVariable),
-    PreviouslyCreatedFlatTermIndex(usize),
-}
-
-impl ToTokens for FlatTermPatternInput {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        tokens.append_all(match self {
-            FlatTermPatternInput::TermId(term_id) => 
-                quote! { #CRATE_ROOT::rule::FlatTermPatternInput::TermId(#term_id) },
-            FlatTermPatternInput::QueryVariable(query_variable) => 
-                quote! { #CRATE_ROOT::rule::FlatTermPatternInput::QueryVariable(#query_variable) },
-            FlatTermPatternInput::PreviouslyCreatedFlatTermIndex(previously_created_flat_term_index) =>
-                quote! { #CRATE_ROOT::rule::FlatTermPatternInput::PreviouslyCreatedFlatTermIndex(#previously_created_flat_term_index) },
-        });
-    }
-}
-
-struct FlatTermPattern {
-    map_id: Ident,
-    inputs: Vec<FlatTermPatternInput>,
-}
-
-impl ToTokens for FlatTermPattern {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let map_id = &self.map_id;
-        let inputs = &self.inputs;
-
-        tokens.append_all(quote! {
-            #CRATE_ROOT::rule::FlatTermPattern {
-                map_id: #map_id,
-                inputs: vec![#(#inputs),*]
-            }
-        });
-    }
-}
-
-enum FlatRulePayload {
-    Creation(FlatTermPattern),
-    Union(FlatTermPatternInput, FlatTermPatternInput),
-}
-
-impl ToTokens for FlatRulePayload {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        tokens.append_all(match self {
-            FlatRulePayload::Creation(term_pattern) =>
-                quote! { #CRATE_ROOT::rule::FlatRulePayload::Creation(#term_pattern) },
-            FlatRulePayload::Union(term_pattern_input_a, term_pattern_input_b) =>
-                quote! { #CRATE_ROOT::rule::FlatRulePayload::Union(#term_pattern_input_a, #term_pattern_input_b) },
-        })
-    }
-}
-
-pub struct FlatRule {
-    query_plan: QueryPlan,
-    payloads: Vec<FlatRulePayload>,
-}
-
-impl From<&TreeRule> for FlatRule {
-    fn from(value: &TreeRule) -> Self {
-        let mut map_term_patterns = Vec::new();
-        let mut flat_rule_payloads = Vec::new();
-        let mut query_variable_table = QueryVariableTable::new();
-
-        for tree_term_pattern in &value.tree_query.tree_term_patterns {
-            tree_term_pattern.extend_flat_map_term_patterns(
-                &mut query_variable_table,
-                &mut map_term_patterns,
-            );
-        }
-
-        for tree_rule_payload in &value.tree_rule_payloads {
-            tree_rule_payload.extend_flat_rule_payloads(
-                &mut query_variable_table,
-                &mut 0,
-                &mut flat_rule_payloads,
-            );
-        }
-
-        Self {
-            query_plan: FlatQuery {
-                map_term_patterns,
-            }.into(),
-            payloads: flat_rule_payloads,
-        }
-    }
-}
-
-impl ToTokens for FlatRule {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let query_plan = &self.query_plan;
-        let flat_rule_payloads = &self.payloads;
-
-        tokens.append_all(quote! {
-            #CRATE_ROOT::rule::FlatRule {
-                query_plan: #query_plan,
-                payloads: vec![#(#flat_rule_payloads),*]
-            }
+        tokens.extend(quote! {
+            #CRATE_ROOT::rule::TreeRule::new(#query, [#(#payloads),*])
         });
     }
 }

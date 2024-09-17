@@ -1,3 +1,4 @@
 imports_granularity = "Crate"
 reorder_impl_items = true
 group_imports = "StdExternalCrate"
+wrap_comments = true

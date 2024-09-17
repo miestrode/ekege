@@ -46,7 +46,7 @@ impl ToTokens for TreeTerm {
         let inputs = &self.inputs;
 
         tokens.append_all(quote! {
-            #CRATE_ROOT::term::TreeTerm::new(#map_id, vec![#(#inputs),*])
+            #CRATE_ROOT::term::TreeTerm::new(#map_id, [#(#inputs),*])
         });
     }
 }

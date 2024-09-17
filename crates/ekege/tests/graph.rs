@@ -44,7 +44,7 @@ fn test_graph() {
         database.new_term(&term! { edge(node_b, node_a) });
     }
 
-    let mut domain = Domain::new(database, rules);
+    let mut domain = Domain::new(database, &rules);
 
     domain.run_rules(TIMES);
 
@@ -52,12 +52,12 @@ fn test_graph() {
         let (first_node, second_node) = (nodes[first_node_index], nodes[first_node_index + OFFSET]);
 
         assert!(domain
-            .database
+            .database()
             .term_id(&term! { path(first_node, second_node) })
             .is_some());
 
         assert!(domain
-            .database
+            .database()
             .term_id(&term! { path(second_node, first_node) })
             .is_some());
     }

@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use std::num::NonZeroUsize;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
@@ -23,9 +24,9 @@ fn generate_regular_random_graph(
     let path = database.new_map(map_signature! { (node, node) -> unit });
 
     let rules = [
-        rule! { edge!('x, 'y) -> path('x, 'y) },
-        rule! { path!('x, 'y), path('y, 'z) -> path('x, 'z) },
-        rule! { path!('y, 'z), path('x, 'y) -> path('x, 'z) },
+        rule! { edge('x, 'y) -> path('x, 'y) },
+        rule! { path('x, 'y), path('y, 'z) -> path('x, 'z) },
+        rule! { path('y, 'z), path('x, 'y) -> path('x, 'z) },
     ];
 
     let mut nodes = vec![database.new_constant(node)];
@@ -48,7 +49,7 @@ fn generate_regular_random_graph(
         database.new_term(&term! { edge(node_b, node_a) });
     }
 
-    Domain::new(database, rules)
+    Domain::new(database, &rules)
 }
 
 fn generate_unification_random_graph(

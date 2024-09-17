@@ -18,10 +18,7 @@ impl ToTokens for MapSignature {
         let output_type_id = &self.output_type_id;
 
         tokens.append_all(quote! {
-            #CRATE_ROOT::map::MapSignature {
-                input_type_ids: vec![#(#input_type_ids),*],
-                output_type_id: #output_type_id
-            }
+            #CRATE_ROOT::map::MapSignature::new(vec![#(#input_type_ids),*], #output_type_id)
         });
     }
 }

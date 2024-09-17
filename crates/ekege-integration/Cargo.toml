@@ -1,0 +1,11 @@
+[package]
+name = "ekege-integration"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Workspace dependencies
+ekege.workspace = true
+
+# Regular dependencies
+rand.workspace = true
