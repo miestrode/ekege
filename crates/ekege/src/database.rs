@@ -235,42 +235,10 @@ impl Database {
     }
 
     fn insert_map_member(
-        database_id: DatabaseId,
-        maps: &[Map],
+        map: &Map,
         term_type_table: &mut TermTable<TypeId>,
-        map_id: MapId,
         term_tuple: TermTuple<'static>,
-        trusted_input: bool,
     ) -> TermId {
-        Self::assert_id_is_local_inner(database_id, map_id, "map id");
-
-        let map = &maps[map_id.sub_id().inner()];
-
-        if !trusted_input {
-            assert_eq!(
-                map.signature.input_type_ids().len(),
-                term_tuple.term_ids.len(),
-                "invalid argument count for map"
-            );
-
-            assert!(
-                term_tuple
-                    .term_ids
-                    .iter()
-                    .zip(map.signature.input_type_ids().iter())
-                    .all(|(argument, type_id)| *term_type_table.get(*argument) == *type_id),
-                "mismatching types for map"
-            );
-
-            for (index, term_id) in term_tuple.term_ids.iter().enumerate() {
-                Self::assert_id_is_local_inner(
-                    database_id,
-                    *term_id,
-                    &format!("term id input in index {index}"),
-                );
-            }
-        }
-
         *map.map_terms
             .entry(term_tuple)
             .or_insert_with(|| term_type_table.insert_term(map.signature.output_type_id()))
@@ -283,6 +251,8 @@ impl Database {
         bump: &'static Bump,
         term: &TreeTerm,
     ) -> TermId {
+        Self::assert_id_is_local_inner(database_id, term.map_id, "map id");
+
         let term_tuple = TermTuple {
             term_ids: term
                 .inputs
@@ -291,19 +261,31 @@ impl Database {
                     TreeTermInput::TreeTerm(term) => {
                         Self::new_term_inner(database_id, maps, term_type_table, bump, term)
                     }
-                    TreeTermInput::TermId(term_id) => term_type_table.canonicalize(*term_id),
+                    TreeTermInput::TermId(term_id) => {
+                        Self::canonicalize_inner(database_id, term_type_table, *term_id)
+                    }
                 })
                 .collect_in(bump),
         };
 
-        Self::insert_map_member(
-            database_id,
-            maps,
-            term_type_table,
-            term.map_id,
-            term_tuple,
-            false,
-        )
+        let map = &maps[term.map_id.sub_id().inner()];
+
+        assert_eq!(
+            map.signature.input_type_ids().len(),
+            term_tuple.term_ids.len(),
+            "invalid argument count for map"
+        );
+
+        assert!(
+            term_tuple
+                .term_ids
+                .iter()
+                .zip(map.signature.input_type_ids().iter())
+                .all(|(argument, type_id)| *term_type_table.get(*argument) == *type_id),
+            "mismatching types for map"
+        );
+
+        Self::insert_map_member(map, term_type_table, term_tuple)
     }
 
     /// Adds a new term to this database and returns its [term ID](TermId). The
@@ -347,18 +329,6 @@ impl Database {
         )
     }
 
-    fn map_member_term_id(&self, map_id: MapId, map_member: TermTuple<'static>) -> Option<TermId> {
-        self.assert_id_is_local(map_id, "map id");
-
-        for (index, term_id) in map_member.term_ids.iter().enumerate() {
-            self.assert_id_is_local(*term_id, &format!("term id input in index {index}"));
-        }
-
-        self.maps[map_id.sub_id().inner()]
-            .map_terms
-            .get(&map_member)
-    }
-
     /// Returns the [term ID](TermId) of an existing [term](TreeTerm), if it
     /// exists.
     ///
@@ -385,23 +355,34 @@ impl Database {
     /// );
     /// ```
     pub fn term_id(&self, term: &TreeTerm) -> Option<TermId> {
-        self.map_member_term_id(
-            term.map_id,
-            TermTuple {
-                term_ids: term
-                    .inputs
-                    .iter()
-                    .map(|input| match input {
-                        TreeTermInput::TreeTerm(term) => self.term_id(term),
-                        TreeTermInput::TermId(term_id) => Some(*term_id),
-                    })
-                    .collect_in::<Option<_>>(
-                        // `Database`'s drop order ensures this reference is dropped
-                        // before the `DatabaseBump` is dropped
-                        unsafe { self.bump.get() },
-                    )?,
-            },
-        )
+        self.assert_id_is_local(term.map_id, "map id");
+
+        let map_member = TermTuple {
+            term_ids: term
+                .inputs
+                .iter()
+                .enumerate()
+                .map(|(index, input)| match input {
+                    TreeTermInput::TreeTerm(term) => self.term_id(term),
+                    TreeTermInput::TermId(term_id) => {
+                        self.assert_id_is_local(
+                            *term_id,
+                            &format!("term id input in index {index}"),
+                        );
+
+                        Some(*term_id)
+                    }
+                })
+                .collect_in::<Option<_>>(
+                    // `Database`'s drop order ensures this reference is dropped
+                    // before the `DatabaseBump` is dropped
+                    unsafe { self.bump.get() },
+                )?,
+        };
+
+        self.maps[term.map_id.sub_id().inner()]
+            .map_terms
+            .get(&map_member)
     }
 
     /// Adds a new term to the database, with a given [type](TypeId).
@@ -424,19 +405,16 @@ impl Database {
     pub fn new_constant(&mut self, type_id: TypeId) -> TermId {
         self.assert_id_is_local(type_id, "type id");
 
-        let const_map = self.new_map(map_signature! { () -> type_id });
+        let constant_map = self.new_map(map_signature! { () -> type_id });
 
         Self::insert_map_member(
-            self.id,
-            &self.maps,
+            &self.maps[constant_map.sub_id().inner()],
             &mut self.term_type_table,
-            const_map,
             TermTuple {
                 // `Database`'s drop order ensures this reference is dropped
                 // before the `DatabaseBump` is dropped
                 term_ids: bumpalo::collections::Vec::new_in(unsafe { self.bump.get() }),
             },
-            true,
         )
     }
 
@@ -619,12 +597,16 @@ impl Database {
         }
     }
 
-    pub(crate) fn run_rules_once(&mut self, bump: &Bump, rules: &mut [ExecutableFlatRule<'_>]) {
+    pub(crate) fn run_rules_once<'a>(
+        &mut self,
+        bump: &Bump,
+        rules: impl IntoIterator<Item = ExecutableFlatRule<'a>>,
+    ) {
         self.end_pre_run_map_terms();
 
         let mut created_terms = Vec::new();
 
-        for rule in rules {
+        for mut rule in rules {
             rule.query_plan.canonicalize(&mut self.term_type_table);
 
             Self::search(bump, &self.maps, &rule.query_plan, &mut |substitution| {
@@ -640,12 +622,9 @@ impl Database {
                             );
 
                             created_terms.push(Database::insert_map_member(
-                                self.id,
-                                &self.maps,
+                                &self.maps[term.map_id.sub_id().inner()],
                                 &mut self.term_type_table,
-                                term.map_id,
                                 inputs,
-                                true,
                             ));
                         }
                         FlatRulePayload::Union(argument_a, argument_b) => {
@@ -664,6 +643,16 @@ impl Database {
         }
 
         self.start_pre_run_map_terms();
+    }
+
+    fn canonicalize_inner(
+        database_id: DatabaseId,
+        term_type_table: &mut TermTable<TypeId>,
+        term_id: TermId,
+    ) -> TermId {
+        Self::assert_id_is_local_inner(database_id, term_id, "term id");
+
+        term_type_table.canonicalize(term_id)
     }
 
     /// Returns the up-to-date [term ID](TermId), this term ID is a part of.
@@ -704,9 +693,7 @@ impl Database {
     /// assert_eq!(database.canonicalize(gray), database.canonicalize(dark_white));
     /// ```
     pub fn canonicalize(&mut self, term_id: TermId) -> TermId {
-        self.assert_id_is_local(term_id, "term id");
-
-        self.term_type_table.canonicalize(term_id)
+        Self::canonicalize_inner(self.id(), &mut self.term_type_table, term_id)
     }
 
     fn unify_inner(

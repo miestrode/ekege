@@ -253,9 +253,7 @@ impl TreeTermPatternInput {
                     query_variable_table.get_or_create_query_variable(query_variable.clone()),
                 )
             }
-            TreeTermPatternInputInner::TermId(term_id) => {
-                FlatTermPatternInput::TermId(term_id.clone())
-            }
+            TreeTermPatternInputInner::TermId(term_id) => FlatTermPatternInput::TermId(*term_id),
             TreeTermPatternInputInner::TreeTermPattern(tree_term_pattern) => {
                 FlatTermPatternInput::PreviouslyCreatedFlatTermIndex(
                     TreeRulePayload::new_term_creation(tree_term_pattern.clone())
@@ -310,7 +308,7 @@ impl TreeTermPattern {
                     )
                 }
                 TreeTermPatternInputInner::TermId(term_id) => {
-                    FlatMapTermPatternInput::TermId(term_id.clone())
+                    FlatMapTermPatternInput::TermId(*term_id)
                 }
                 TreeTermPatternInputInner::TreeTermPattern(tree_term_pattern) => {
                     FlatMapTermPatternInput::QueryVariable(
@@ -331,7 +329,7 @@ impl TreeTermPattern {
         ));
 
         let root_flat_map_term_pattern = FlatMapTermPattern {
-            map_id: self.map_id.clone(),
+            map_id: self.map_id,
             inputs,
         };
 
@@ -407,7 +405,7 @@ impl TreeRulePayload {
         match &self.0 {
             TreeRulePayloadInner::TermCreation(tree_term_pattern) => {
                 let root_flat_term_pattern = FlatTermPattern {
-                    map_id: tree_term_pattern.map_id.clone(),
+                    map_id: tree_term_pattern.map_id,
                     inputs: tree_term_pattern
                         .inputs
                         .iter()
@@ -419,7 +417,7 @@ impl TreeRulePayload {
                                 )
                             }
                             TreeTermPatternInputInner::TermId(term_id) => {
-                                FlatTermPatternInput::TermId(term_id.clone())
+                                FlatTermPatternInput::TermId(*term_id)
                             }
                             TreeTermPatternInputInner::TreeTermPattern(tree_term_pattern) => {
                                 FlatTermPatternInput::PreviouslyCreatedFlatTermIndex(
@@ -555,7 +553,7 @@ impl From<FlatQuery> for QueryPlan {
                             .or_insert(Vec::new())
                             .push(SchematicAtom {
                                 tuple_index,
-                                inner: SchematicAtomInner::TermId(term_id.clone()),
+                                inner: SchematicAtomInner::TermId(*term_id),
                             });
                     }
                 }
@@ -568,7 +566,7 @@ impl From<FlatQuery> for QueryPlan {
             for (variable, relevant_pattern_indices) in pattern.inputs.iter().filter_map(|input| {
                 if let FlatMapTermPatternInput::QueryVariable(variable) = input {
                     variable_inclusion_map
-                        .remove(&variable)
+                        .remove(variable)
                         .map(|relevant_pattern_indices| (variable, relevant_pattern_indices))
                 } else {
                     None
@@ -581,7 +579,7 @@ impl From<FlatQuery> for QueryPlan {
                         .entry(pattern_index)
                         .or_insert(SubMapTerm {
                             colt_id,
-                            map_id: query.map_term_patterns[pattern_index].map_id.clone(),
+                            map_id: query.map_term_patterns[pattern_index].map_id,
                             atoms: pattern_constant_atoms
                                 .remove(&pattern_index)
                                 .unwrap_or(Vec::new()),
@@ -614,11 +612,8 @@ pub(crate) enum FlatTermPatternInput {
 
 impl FlatTermPatternInput {
     fn assert_ids_are_local(&self, database_id: DatabaseId) {
-        match self {
-            FlatTermPatternInput::TermId(term_id) => {
-                Database::assert_id_is_local_inner(database_id, *term_id, "term id")
-            }
-            _ => {}
+        if let FlatTermPatternInput::TermId(term_id) = self {
+            Database::assert_id_is_local_inner(database_id, *term_id, "term id")
         }
     }
 
@@ -689,9 +684,9 @@ pub(crate) struct FlatRule {
     pub(crate) payloads: Vec<FlatRulePayload>,
 }
 
-pub(crate) struct ExecutableFlatRule<'flat_rule> {
+pub(crate) struct ExecutableFlatRule<'a> {
     pub(crate) query_plan: ExecutableQueryPlan,
-    pub(crate) payloads: &'flat_rule [FlatRulePayload],
+    pub(crate) payloads: &'a [FlatRulePayload],
 }
 
 impl FlatRule {
@@ -704,7 +699,10 @@ impl FlatRule {
     }
 
     // The colt ID to require new term is passed to allow for semi-naive evaluation
-    pub(crate) fn to_executable(&self, colt_id_to_require_new_terms: ColtId) -> ExecutableFlatRule {
+    pub(crate) fn to_executable(
+        &self,
+        colt_id_to_require_new_terms: ColtId,
+    ) -> ExecutableFlatRule<'_> {
         ExecutableFlatRule {
             query_plan: self.query_plan.to_executable(colt_id_to_require_new_terms),
             payloads: &self.payloads,

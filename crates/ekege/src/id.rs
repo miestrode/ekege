@@ -1,7 +1,7 @@
 //! Types related to the numeric identifiers used throughout the crate, via
 //! aliases, to refer to different constructs.
 //!
-//! The main type of this module is [`Id`], the core numeric ID data type.
+//! The main type of this module is [`SubId`], a numeric ID data type belonging to some other ID.
 use std::{
     fmt::{self, Display},
     iter,
@@ -28,14 +28,11 @@ impl Id {
     }
 }
 
-/// A simple wrapper over [`usize`] to act as a basic ID data type.
+/// An ID used to refer to items which exist in other items.
 /// Others ID types, such as [`TypeId`](ekege::map::TypeId),
 /// [`TermId`](ekege::term::TermId), [`MapId`](ekege::map::MapId),
 /// and more, are aliases of this type.
-///
-/// It is public so that dependent code can store and refer to different
-/// numeric ID types, but otherwise shouldn't be directly constructed.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct SubId {
     main_id: Id,
     sub_id: Id,

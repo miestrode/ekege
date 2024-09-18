@@ -19,11 +19,8 @@ pub(crate) enum SchematicAtomInner {
 
 impl SchematicAtomInner {
     fn assert_ids_are_local(&self, database_id: DatabaseId) {
-        match self {
-            SchematicAtomInner::TermId(term_id) => {
-                Database::assert_id_is_local_inner(database_id, *term_id, "term id")
-            }
-            _ => {}
+        if let SchematicAtomInner::TermId(term_id) = self {
+            Database::assert_id_is_local_inner(database_id, *term_id, "term id")
         }
     }
 }

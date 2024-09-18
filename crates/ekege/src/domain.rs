@@ -50,19 +50,16 @@ impl Domain {
     pub fn run_rules(&mut self, times: usize) {
         let bump = Bump::new();
 
-        let mut executable_rules = self
-            .rules
-            .iter()
-            .flat_map(|rule| {
-                // Semi-naive evaluation
-                (0..rule.query_plan.colt_ids)
-                    .map(ColtId::new)
-                    .map(|colt_id| rule.to_executable(colt_id))
-            })
-            .collect::<Vec<_>>();
-
         for _ in 0..times {
-            self.database.run_rules_once(&bump, &mut executable_rules);
+            self.database.run_rules_once(
+                &bump,
+                self.rules.iter().flat_map(|rule| {
+                    // Semi-naive evaluation
+                    (0..rule.query_plan.colt_ids)
+                        .map(ColtId::new)
+                        .map(|colt_id| rule.to_executable(colt_id))
+                }),
+            );
             self.database.rebuild();
         }
     }

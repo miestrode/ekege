@@ -1,4 +1,4 @@
-use ekege::{database::Database, domain::Domain, map::map_signature, rule::rule, term::term};
+use ekege::{database::Database, domain::Domain, map::map_signature, rule::rewrite, term::term};
 
 #[test]
 fn test_double_negative() {
@@ -8,7 +8,7 @@ fn test_double_negative() {
 
     let not = database.new_map(map_signature! { (boolean,) -> boolean });
 
-    let double_negative = rule! { not(not('x)) -> not(not('x)) == 'x };
+    let double_negative = rewrite! { not(not('x)) -> 'x };
 
     let rules = [double_negative];
 
