@@ -81,8 +81,8 @@ pub fn equivalence(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// Creates a `rustdoc` admonition string for discouraged-use items,
 /// which should instead be used indirectly, via macros.
 ///
-/// The macro takes as a single parameter, a path to an item. This item should be
-/// the macro users can use to create the item.
+/// The macro takes as a single parameter, a path to an item. This item should
+/// be the macro users can use to create the item.
 ///
 /// # Examples
 ///

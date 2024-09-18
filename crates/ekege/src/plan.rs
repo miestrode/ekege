@@ -1,40 +1,72 @@
+use std::collections::BTreeMap;
+
+use super::rule::QueryVariable;
 use crate::{
     colt::Captures,
+    database::{Database, DatabaseId},
     id::Id,
     map::{MapId, SeparatedMapTerm},
     term::{TermId, TermTable},
 };
-use std::collections::BTreeMap;
-
-use super::rule::QueryVariable;
 
 pub(crate) type ColtId = Id;
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
-pub enum SchematicAtomInner {
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+pub(crate) enum SchematicAtomInner {
     Variable(QueryVariable),
     TermId(TermId),
 }
 
-#[derive(Debug)]
-pub struct SchematicAtom {
-    pub tuple_index: usize,
-    pub inner: SchematicAtomInner,
+impl SchematicAtomInner {
+    fn assert_ids_are_local(&self, database_id: DatabaseId) {
+        match self {
+            SchematicAtomInner::TermId(term_id) => {
+                Database::assert_id_is_local_inner(database_id, *term_id, "term id")
+            }
+            _ => {}
+        }
+    }
 }
 
-#[derive(Debug)]
-pub struct SubMapTerm {
-    pub map_id: MapId,
-    pub colt_id: ColtId,
-    pub atoms: Vec<SchematicAtom>,
+pub(crate) struct SchematicAtom {
+    pub(crate) tuple_index: usize,
+    pub(crate) inner: SchematicAtomInner,
 }
 
-#[derive(Debug)]
-pub struct QueryPlanSection {
-    pub sub_map_terms: Vec<SubMapTerm>,
+impl SchematicAtom {
+    fn assert_ids_are_local(&self, database_id: DatabaseId) {
+        self.inner.assert_ids_are_local(database_id);
+    }
 }
 
-#[derive(Debug)]
+pub(crate) struct SubMapTerm {
+    pub(crate) map_id: MapId,
+    pub(crate) colt_id: ColtId,
+    pub(crate) atoms: Vec<SchematicAtom>,
+}
+
+impl SubMapTerm {
+    fn assert_ids_are_local(&self, database_id: DatabaseId) {
+        Database::assert_id_is_local_inner(database_id, self.map_id, "map id");
+
+        for atom in &self.atoms {
+            atom.assert_ids_are_local(database_id);
+        }
+    }
+}
+
+pub(crate) struct QueryPlanSection {
+    pub(crate) sub_map_terms: Vec<SubMapTerm>,
+}
+
+impl QueryPlanSection {
+    fn assert_ids_are_local(&self, database_id: DatabaseId) {
+        for sub_map_term in &self.sub_map_terms {
+            sub_map_term.assert_ids_are_local(database_id);
+        }
+    }
+}
+
 pub(crate) struct SubMapTermSchematic {
     indices: Vec<(QueryVariable, usize)>,
     equality_requirements: Vec<(usize, usize)>,
@@ -120,10 +152,17 @@ impl ColtSchematic {
     }
 }
 
-#[derive(Debug)]
 pub(crate) struct QueryPlan {
     pub(crate) colt_ids: usize,
     pub(crate) sections: Vec<QueryPlanSection>,
+}
+
+impl QueryPlan {
+    pub(crate) fn assert_ids_are_local(&self, database_id: DatabaseId) {
+        for section in &self.sections {
+            section.assert_ids_are_local(database_id);
+        }
+    }
 }
 
 pub(crate) struct ExecutableQueryPlan {

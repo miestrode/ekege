@@ -55,12 +55,16 @@ use ekege_macros::map_signature;
 
 use crate::{
     colt::Colt,
-    id::{Id, IdGenerator},
+    id::{AtomicIdGenerator, Id, SubId, SubIdGenerator},
     map::{FxIndexMap, Map, MapId, MapSignature, MapTerms, SeparatedMapTerm, TypeId},
     plan::{ColtId, ExecutableQueryPlan},
     rule::{ExecutableFlatRule, FlatRulePayload, QueryVariable},
     term::{TermId, TermTable, TermTuple, TreeTerm, TreeTermInput, UnifyResult},
 };
+
+pub(crate) type DatabaseId = Id;
+
+static DATABASE_ID_GENERATOR: AtomicIdGenerator = AtomicIdGenerator::new();
 
 struct PendingRewrite {
     old_term_id: TermId,
@@ -95,9 +99,10 @@ impl Drop for DatabaseBump {
 ///
 /// See [`database`](ekege::database) for more information on the database.
 pub struct Database {
+    id: DatabaseId,
     maps: Vec<Map>,
-    pub(crate) term_type_table: TermTable<TypeId>,
-    type_id_generator: IdGenerator,
+    term_type_table: TermTable<TypeId>,
+    type_id_generator: SubIdGenerator,
     pending_rewrites: Vec<PendingRewrite>,
     bump: DatabaseBump,
 }
@@ -105,17 +110,42 @@ pub struct Database {
 impl Database {
     /// Creates a new, empty database, with no terms, types, or maps stored.
     pub fn new() -> Self {
+        let id = DATABASE_ID_GENERATOR.generate_id();
+
         Self {
             maps: Vec::new(),
-            term_type_table: TermTable::new(),
-            type_id_generator: IdGenerator::new(),
+            term_type_table: TermTable::new(id),
+            type_id_generator: SubIdGenerator::new(id),
             pending_rewrites: Vec::new(),
             bump: DatabaseBump::new(),
+            id,
         }
     }
 
-    /// Adds a new, empty map with a given signature to the database. See [`map_signature!`] for
-    /// more information. The returned value is a [`MapId`], to be used for referring to the map.
+    pub(crate) fn id(&self) -> DatabaseId {
+        self.id
+    }
+
+    pub(crate) fn assert_id_is_local_inner(
+        database_id: DatabaseId,
+        sub_id: SubId,
+        description: &str,
+    ) {
+        assert!(
+            database_id == sub_id.main_id(),
+            "{description} is from database with id {}, which is foreign to this database (id {})",
+            sub_id.main_id(),
+            database_id
+        );
+    }
+
+    fn assert_id_is_local(&self, sub_id: SubId, description: &str) {
+        Self::assert_id_is_local_inner(self.id, sub_id, description);
+    }
+
+    /// Adds a new, empty map with a given signature to the database. See
+    /// [`map_signature!`] for more information. The returned value is a
+    /// [`MapId`], to be used for referring to the map.
     ///
     /// # Examples
     ///
@@ -134,16 +164,26 @@ impl Database {
     /// database.new_term(&term! { add(a, b) });
     /// ```
     pub fn new_map(&mut self, signature: MapSignature) -> MapId {
-        let id = Id::new(self.maps.len());
+        let id = MapId::new(self.id, Id::new(self.maps.len()));
+
+        for (index, type_id) in signature.input_type_ids().iter().enumerate() {
+            self.assert_id_is_local(
+                *type_id,
+                &format!("input type id in index {index} in signature"),
+            );
+        }
+
+        self.assert_id_is_local(signature.output_type_id(), "output type id in signature");
 
         self.maps.push(Map::new(signature));
 
         id
     }
 
-    /// Adds a new type to the database, returning the [type ID](TypeId) of the type. A type has no meaning. Instead, its meaning is given by
-    /// the [maps](Database::new_map) in the database, and the [rule](ekege::rule::rule)s in
-    /// the [domain](ekege::domain::Domain).
+    /// Adds a new type to the database, returning the [type ID](TypeId) of the
+    /// type. A type has no meaning. Instead, its meaning is given by
+    /// the [maps](Database::new_map) in the database, and the
+    /// [rule](ekege::rule::rule)s in the [domain](ekege::domain::Domain).
     ///
     /// # Examples
     ///
@@ -189,17 +229,22 @@ impl Database {
     /// assert_eq!(database.type_id(two), int);
     /// ```
     pub fn type_id(&self, term_id: TermId) -> TypeId {
+        self.assert_id_is_local(term_id, "term id");
+
         *self.term_type_table.get(term_id)
     }
 
     fn insert_map_member(
+        database_id: DatabaseId,
         maps: &[Map],
         term_type_table: &mut TermTable<TypeId>,
         map_id: MapId,
         term_tuple: TermTuple<'static>,
         trusted_input: bool,
     ) -> TermId {
-        let map = &maps[map_id.inner()];
+        Self::assert_id_is_local_inner(database_id, map_id, "map id");
+
+        let map = &maps[map_id.sub_id().inner()];
 
         if !trusted_input {
             assert_eq!(
@@ -216,6 +261,14 @@ impl Database {
                     .all(|(argument, type_id)| *term_type_table.get(*argument) == *type_id),
                 "mismatching types for map"
             );
+
+            for (index, term_id) in term_tuple.term_ids.iter().enumerate() {
+                Self::assert_id_is_local_inner(
+                    database_id,
+                    *term_id,
+                    &format!("term id input in index {index}"),
+                );
+            }
         }
 
         *map.map_terms
@@ -224,6 +277,7 @@ impl Database {
     }
 
     fn new_term_inner(
+        database_id: DatabaseId,
         maps: &[Map],
         term_type_table: &mut TermTable<TypeId>,
         bump: &'static Bump,
@@ -235,24 +289,32 @@ impl Database {
                 .iter()
                 .map(|input| match input {
                     TreeTermInput::TreeTerm(term) => {
-                        Self::new_term_inner(maps, term_type_table, bump, term)
+                        Self::new_term_inner(database_id, maps, term_type_table, bump, term)
                     }
                     TreeTermInput::TermId(term_id) => term_type_table.canonicalize(*term_id),
                 })
                 .collect_in(bump),
         };
 
-        Self::insert_map_member(maps, term_type_table, term.map_id, term_tuple, false)
+        Self::insert_map_member(
+            database_id,
+            maps,
+            term_type_table,
+            term.map_id,
+            term_tuple,
+            false,
+        )
     }
 
-    /// Adds a new term to this database and returns its [term ID](TermId). The term is created
-    /// using a [tree term](TreeTerm), or a "term skeleton". This data structure can store nested
-    /// terms. See [`term!`](ekege::term::term) for more information.
+    /// Adds a new term to this database and returns its [term ID](TermId). The
+    /// term is created using a [tree term](TreeTerm), or a "term skeleton".
+    /// This data structure can store nested terms. See
+    /// [`term!`](ekege::term::term) for more information.
     ///
     /// # Panics
     ///
-    /// If a map receives the wrong number of arguments, or a parameter with the wrong type, this
-    /// method will panic.
+    /// If a map receives the wrong number of arguments, or a parameter with the
+    /// wrong type, this method will panic.
     ///
     /// # Examples
     ///
@@ -275,6 +337,7 @@ impl Database {
     /// ```
     pub fn new_term(&mut self, term: &TreeTerm) -> TermId {
         Self::new_term_inner(
+            self.id,
             &self.maps,
             &mut self.term_type_table,
             // `Database`'s drop order ensures this reference is dropped
@@ -285,10 +348,19 @@ impl Database {
     }
 
     fn map_member_term_id(&self, map_id: MapId, map_member: TermTuple<'static>) -> Option<TermId> {
-        self.maps[map_id.inner()].map_terms.get(&map_member)
+        self.assert_id_is_local(map_id, "map id");
+
+        for (index, term_id) in map_member.term_ids.iter().enumerate() {
+            self.assert_id_is_local(*term_id, &format!("term id input in index {index}"));
+        }
+
+        self.maps[map_id.sub_id().inner()]
+            .map_terms
+            .get(&map_member)
     }
 
-    /// Returns the [term ID](TermId) of an existing [term](TreeTerm), if it exists.
+    /// Returns the [term ID](TermId) of an existing [term](TreeTerm), if it
+    /// exists.
     ///
     /// # Examples
     ///
@@ -333,8 +405,8 @@ impl Database {
     }
 
     /// Adds a new term to the database, with a given [type](TypeId).
-    /// A constant is a member of a map with zero parameters, and a given output type. This map
-    /// therefore can only have one instance.
+    /// A constant is a member of a map with zero parameters, and a given output
+    /// type. This map therefore can only have one instance.
     ///
     /// # Examples
     ///
@@ -350,9 +422,12 @@ impl Database {
     /// let two = database.new_term(&term! { add(one, one) });
     /// ```
     pub fn new_constant(&mut self, type_id: TypeId) -> TermId {
+        self.assert_id_is_local(type_id, "type id");
+
         let const_map = self.new_map(map_signature! { () -> type_id });
 
         Self::insert_map_member(
+            self.id,
             &self.maps,
             &mut self.term_type_table,
             const_map,
@@ -500,7 +575,7 @@ impl Database {
                 (
                     colt_id,
                     Colt::new(
-                        &maps[schematic.map_id.inner()],
+                        &maps[schematic.map_id.sub_id().inner()],
                         bump,
                         &schematic.sub_schematics,
                         schematic.new_terms_required,
@@ -565,6 +640,7 @@ impl Database {
                             );
 
                             created_terms.push(Database::insert_map_member(
+                                self.id,
                                 &self.maps,
                                 &mut self.term_type_table,
                                 term.map_id,
@@ -590,20 +666,23 @@ impl Database {
         self.start_pre_run_map_terms();
     }
 
-    /// Returns the up-to-date [term ID](TermId), this term ID is a part of. This can be used, for
-    /// example, to check if two terms, using their term IDs, are equivalent in the current
-    /// database.
+    /// Returns the up-to-date [term ID](TermId), this term ID is a part of.
+    /// This can be used, for example, to check if two terms, using their
+    /// term IDs, are equivalent in the current database.
     ///
-    /// In the database, equivalent terms use equivalent term IDs. Canonicalization takes an "old"
-    /// term ID, and returns the up-to-date term ID, that is now used for it, in the database.
-    /// Naturally, when the IDs are different, there are more terms are equivalent to this term.
+    /// In the database, equivalent terms use equivalent term IDs.
+    /// Canonicalization takes an "old" term ID, and returns the up-to-date
+    /// term ID, that is now used for it, in the database. Naturally, when
+    /// the IDs are different, there are more terms are equivalent to this term.
     ///
-    /// This method is needed, because as the term IDs used in the database, are changed during
-    /// [rebuilding](Database::rebuild), the term IDs stored in local variables, and outside the
-    /// database, are not updated. Internally, methods of [`Database`], canonicalize their inputs.
+    /// This method is needed, because as the term IDs used in the database, are
+    /// changed during [rebuilding](Database::rebuild), the term IDs stored
+    /// in local variables, and outside the database, are not updated.
+    /// Internally, methods of [`Database`], canonicalize their inputs.
     ///
-    /// See [`database`][ekege::database] for more information on term IDs, and the union-find data
-    /// structure which stores them, and enables canonicalization and related operations.
+    /// See [`database`][ekege::database] for more information on term IDs, and
+    /// the union-find data structure which stores them, and enables
+    /// canonicalization and related operations.
     ///
     /// # Examples
     ///
@@ -625,6 +704,8 @@ impl Database {
     /// assert_eq!(database.canonicalize(gray), database.canonicalize(dark_white));
     /// ```
     pub fn canonicalize(&mut self, term_id: TermId) -> TermId {
+        self.assert_id_is_local(term_id, "term id");
+
         self.term_type_table.canonicalize(term_id)
     }
 
@@ -656,13 +737,15 @@ impl Database {
         new_term_id
     }
 
-    /// Mark two [term ID](TermId)s for unification. The terms will be considered equal according
-    /// to [`Database::equal`], but the database will not be rebuilt, meaning that the old term IDs
-    /// will still appear in the database. [Rebuilding](Database::rebuild), fully executes the
+    /// Mark two [term ID](TermId)s for unification. The terms will be
+    /// considered equal according to [`Database::equal`], but the database
+    /// will not be rebuilt, meaning that the old term IDs will still appear
+    /// in the database. [Rebuilding](Database::rebuild), fully executes the
     /// unification therefore.
     ///
-    /// When two terms are unified, they are said to be equivalent, and will have the same term ID.
-    /// Whenever one is used in a certain place, the other will, by proxy, be "used" there too.
+    /// When two terms are unified, they are said to be equivalent, and will
+    /// have the same term ID. Whenever one is used in a certain place, the
+    /// other will, by proxy, be "used" there too.
     ///
     /// See [`database`](ekege::database) for more information on unification.
     ///
@@ -698,6 +781,9 @@ impl Database {
     /// assert!(database.equal(pair_1, pair_2));
     /// ```
     pub fn unify(&mut self, term_id_a: TermId, term_id_b: TermId) {
+        self.assert_id_is_local(term_id_a, "first term id");
+        self.assert_id_is_local(term_id_b, "second term id");
+
         Self::unify_inner(
             &mut self.term_type_table,
             &mut self.pending_rewrites,
@@ -728,7 +814,10 @@ impl Database {
                 }
             };
 
-        fn is_substitution_relevant(member: &[Id], substitution: &BTreeMap<Id, Id>) -> bool {
+        fn is_substitution_relevant(
+            member: &[SubId],
+            substitution: &BTreeMap<SubId, SubId>,
+        ) -> bool {
             member
                 .iter()
                 .any(|term_id| substitution.contains_key(term_id))
@@ -814,8 +903,9 @@ impl Database {
         }
     }
 
-    /// Rebuild the database, "executing" all of the pending [unifications](Database::unify) on the
-    /// terms stored, and unifying new terms based on the results of these unifications.
+    /// Rebuild the database, "executing" all of the pending
+    /// [unifications](Database::unify) on the terms stored, and unifying
+    /// new terms based on the results of these unifications.
     ///
     /// # Examples
     ///
@@ -850,14 +940,14 @@ impl Database {
     /// ```
     pub fn rebuild(&mut self) {
         while !self.pending_rewrites.is_empty() {
-            println!("LESGO");
             self.rebuild_all_maps_once();
         }
     }
 
-    /// Checks if two term IDs are equivalent. If two terms have been unified, manually, as a
-    /// result of a rule, or automatically, due to another unification requiring this, they will
-    /// immediately be considered equivalent.
+    /// Checks if two term IDs are equivalent. If two terms have been unified,
+    /// manually, as a result of a rule, or automatically, due to another
+    /// unification requiring this, they will immediately be considered
+    /// equivalent.
     ///
     /// # Examples
     ///
@@ -893,6 +983,9 @@ impl Database {
     /// assert!(database.equal(pair_1, pair_2));
     /// ```
     pub fn equal(&mut self, term_id_a: TermId, term_id_b: TermId) -> bool {
+        self.assert_id_is_local(term_id_a, "first term id");
+        self.assert_id_is_local(term_id_b, "second term id");
+
         self.canonicalize(term_id_a) == self.canonicalize(term_id_b)
     }
 }

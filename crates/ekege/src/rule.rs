@@ -1,8 +1,12 @@
 //! Items related to the rules used in a [domain](ekege::domain::Domain).
+use std::collections::BTreeMap;
+
+use bumpalo::{collections::CollectIn, Bump};
 use ekege::discouraged;
-/// Macro for creating a two-way [`rewrite!`] rule. This macro returns a `[TreeRule; 2]`. Using the two rules stored in
-/// the array, provides a two-way rewrite rule. It is constructed in the same way as a rewrite rule, except that the
-/// `->` arrow is replaced with a `==` equal sign.
+/// Macro for creating a two-way [`rewrite!`] rule. This macro returns a
+/// `[TreeRule; 2]`. Using the two rules stored in the array, provides a two-way
+/// rewrite rule. It is constructed in the same way as a rewrite rule, except
+/// that the `->` arrow is replaced with a `==` equal sign.
 ///
 /// # Examples
 ///
@@ -19,11 +23,11 @@ use ekege::discouraged;
 ///
 /// let [associativity_rule_1, associativity_rule_2] = equivalence! { add('x, add('y, 'z)) == add(add('x, 'y), 'z) };
 /// ```
-///
 pub use ekege_macros::equivalence;
-/// Macro for creating a rewrite [rule](rule!). A rewrite rule is constructed from two sets of comma-separated
-/// "inputs" (query variables, [tree term](TreeTermPattern)s, and [term ID](TermId)), for which *unification* payloads
-/// are created respectively.
+/// Macro for creating a rewrite [rule](rule!). A rewrite rule is constructed
+/// from two sets of comma-separated "inputs" (query variables, [tree
+/// term](TreeTermPattern)s, and [term ID](TermId)), for which *unification*
+/// payloads are created respectively.
 ///
 /// # Examples
 ///
@@ -45,7 +49,8 @@ pub use ekege_macros::equivalence;
 /// let addition_with_zero = rewrite! { add('x, successor('y)) -> successor(add('x, 'y)) };
 /// ```
 ///
-/// Simplify a computational graph fusing two `min` and `max` operations with a single `minmax` operation:
+/// Simplify a computational graph fusing two `min` and `max` operations with a
+/// single `minmax` operation:
 ///
 /// ```rust
 /// # use ekege::{database::Database, map::map_signature, rule::rewrite};
@@ -72,17 +77,19 @@ pub use ekege_macros::equivalence;
 pub use ekege_macros::rewrite;
 /// Macro for creating a [domain](ekege::domain::Domain) rule.
 ///
-/// A rule has a query, which restricts a set of named "query variables", and a set of payloads,
-/// perform actions on a [database](ekege::database::Database).
+/// A rule has a query, which restricts a set of named "query variables", and a
+/// set of payloads, perform actions on a [database](ekege::database::Database).
 ///
-/// The query of a rule is a set of [term patterns](TreeTermPattern) which include nested patterns,
-/// [term ID](TermId)s, and query variables The payloads of a rule are either *term creation* payloads,
-/// which create new terms, or *unification* payloads, which unify two specified terms. The payloads
-/// of a rule may depend on the query variables, such that the payloads will execute for each group
-/// of query variables that passed the query.
+/// The query of a rule is a set of [term patterns](TreeTermPattern) which
+/// include nested patterns, [term ID](TermId)s, and query variables The
+/// payloads of a rule are either *term creation* payloads, which create new
+/// terms, or *unification* payloads, which unify two specified terms. The
+/// payloads of a rule may depend on the query variables, such that the payloads
+/// will execute for each group of query variables that passed the query.
 ///
-/// All items referenced in a [`rule!`] macro invocation (maps, [term ID](ekege::term::TermId)s, etc.),
-/// should exist in the scope of the invocation.
+/// All items referenced in a [`rule!`] macro invocation (maps, [term
+/// ID](ekege::term::TermId)s, etc.), should exist in the scope of the
+/// invocation.
 ///
 /// # Examples
 ///
@@ -136,7 +143,8 @@ pub use ekege_macros::rewrite;
 ///     rule! { add('x, multiply('y, one)) -> add('x, 'y) == add('x, multiply('y, one)) };
 /// ```
 ///
-/// An unconditional rule with a *unification* payload, using two existing term IDs `x` and `y` (not query variables):
+/// An unconditional rule with a *unification* payload, using two existing term
+/// IDs `x` and `y` (not query variables):
 ///
 /// ```rust
 /// # use ekege::{database::Database, rule::rule};
@@ -151,18 +159,16 @@ pub use ekege_macros::rewrite;
 /// let union = rule! { -> x == y };
 /// ```
 pub use ekege_macros::rule;
-use std::collections::BTreeMap;
 
-use bumpalo::{collections::CollectIn, Bump};
-
+use super::plan::ExecutableQueryPlan;
+use crate::database::Database;
+use crate::database::DatabaseId;
 use crate::{
     id::Id,
     map::MapId,
     plan::{ColtId, QueryPlan, QueryPlanSection, SchematicAtom, SchematicAtomInner, SubMapTerm},
     term::{TermId, TermTuple},
 };
-
-use super::plan::ExecutableQueryPlan;
 
 pub(crate) type QueryVariable = Id;
 
@@ -192,7 +198,7 @@ impl QueryVariableTable {
         let new_query_variable = *query_variables;
         *query_variables += 1;
 
-        Id::new(new_query_variable)
+        QueryVariable::new(new_query_variable)
     }
 }
 
@@ -204,17 +210,16 @@ enum TreeTermPatternInputInner {
 }
 
 #[derive(Clone)]
-/// An item stored in a [tree term pattern](TreeTermPattern). These can be either query variables,
-/// [term ID](TermId)s, or other tree term patterns.
+/// An item stored in a [tree term pattern](TreeTermPattern). These can be
+/// either query variables, [term ID](TermId)s, or other tree term patterns.
 ///
 /// See [tree term pattern](TreeTermPattern) for more information.
-///
 #[doc = discouraged!(ekege::rule::rule)]
 pub struct TreeTermPatternInput(TreeTermPatternInputInner);
 
 impl TreeTermPatternInput {
-    /// Creates a new [tree term pattern input](TreeTermPatternInput) that is a query variable.
-    ///
+    /// Creates a new [tree term pattern input](TreeTermPatternInput) that is a
+    /// query variable.
     #[doc = discouraged!(ekege::rule::rule)]
     pub fn new_query_variable(variable: impl ToString) -> Self {
         Self(TreeTermPatternInputInner::QueryVariable(
@@ -222,15 +227,15 @@ impl TreeTermPatternInput {
         ))
     }
 
-    /// Creates a new [tree term pattern input](TreeTermPatternInput) that is a [term ID](TermId).
-    ///
+    /// Creates a new [tree term pattern input](TreeTermPatternInput) that is a
+    /// [term ID](TermId).
     #[doc = discouraged!(ekege::rule::rule)]
     pub fn new_term_id(term_id: TermId) -> Self {
         Self(TreeTermPatternInputInner::TermId(term_id))
     }
 
-    /// Creates a new [tree term pattern input](TreeTermPatternInput) that is a [tree term pattern](TreeTermPattern).
-    ///
+    /// Creates a new [tree term pattern input](TreeTermPatternInput) that is a
+    /// [tree term pattern](TreeTermPattern).
     #[doc = discouraged!(ekege::rule::rule)]
     pub fn new_tree_term_pattern(pattern: TreeTermPattern) -> Self {
         Self(TreeTermPatternInputInner::TreeTermPattern(pattern))
@@ -267,10 +272,10 @@ impl TreeTermPatternInput {
 }
 
 #[derive(Clone)]
-/// A uninterpreted term pattern that stores nested terms in a tree-like fashion.
+/// A uninterpreted term pattern that stores nested terms in a tree-like
+/// fashion.
 ///
 /// See [`rule!`] for more information.
-///
 #[doc = discouraged!(ekege::rule::rule)]
 pub struct TreeTermPattern {
     map_id: MapId,
@@ -278,10 +283,10 @@ pub struct TreeTermPattern {
 }
 
 impl TreeTermPattern {
-    /// Creates a new [tree term pattern](TreeTermPattern) that exists in a [map ID](MapId), taking a set of [inputs](TreeTermPatternInput).
+    /// Creates a new [tree term pattern](TreeTermPattern) that exists in a [map
+    /// ID](MapId), taking a set of [inputs](TreeTermPatternInput).
     ///
     /// See [`rule!`] for more information.
-    ///
     #[doc = discouraged!(ekege::rule::rule)]
     pub fn new(map_id: MapId, inputs: impl IntoIterator<Item = TreeTermPatternInput>) -> Self {
         Self {
@@ -336,18 +341,18 @@ impl TreeTermPattern {
     }
 }
 
-/// A [rule](rule!) query storing term patterns in a tree-like fashion, using [tree term pattern](TreeTermPattern)s.
+/// A [rule](rule!) query storing term patterns in a tree-like fashion, using
+/// [tree term pattern](TreeTermPattern)s.
 ///
 /// See [`rule!`] for more information.
-///
 #[doc = discouraged!(ekege::rule::rule)]
 pub struct TreeQuery {
     term_patterns: Vec<TreeTermPattern>,
 }
 
 impl TreeQuery {
-    /// Creates a new [tree query](TreeQuery) from a collection of [tree term pattern](TreeTermPattern)s.
-    ///
+    /// Creates a new [tree query](TreeQuery) from a collection of [tree term
+    /// pattern](TreeTermPattern)s.
     #[doc = discouraged!(ekege::rule::rule)]
     pub fn new(query_term_patterns: impl IntoIterator<Item = TreeTermPattern>) -> Self {
         Self {
@@ -361,27 +366,27 @@ enum TreeRulePayloadInner {
     Union(TreeTermPatternInput, TreeTermPatternInput),
 }
 
-/// A [rule](rule!) payload storing term patterns in a tree-like fashion, using [tree term pattern](TreeTermPattern)s.
+/// A [rule](rule!) payload storing term patterns in a tree-like fashion, using
+/// [tree term pattern](TreeTermPattern)s.
 ///
 /// See [`rule!`] for more information.
-///
 #[doc = discouraged!(ekege::rule::rule)]
 pub struct TreeRulePayload(TreeRulePayloadInner);
 
 impl TreeRulePayload {
-    /// Creates a *term creation* [tree rule payload](TreeRulePayload), creating terms using the passed [tree term pattern](TreeTermPattern).
+    /// Creates a *term creation* [tree rule payload](TreeRulePayload), creating
+    /// terms using the passed [tree term pattern](TreeTermPattern).
     ///
     /// See [`rule!`] for more information.
-    ///
     #[doc = discouraged!(ekege::rule::rule)]
     pub fn new_term_creation(tree_term_pattern: TreeTermPattern) -> Self {
         Self(TreeRulePayloadInner::TermCreation(tree_term_pattern))
     }
 
-    /// Creates a *unification* [tree rule payload](TreeRulePayload), unifying terms using the passed [tree term pattern input](TreeTermPatternInput)s.
+    /// Creates a *unification* [tree rule payload](TreeRulePayload), unifying
+    /// terms using the passed [tree term pattern input](TreeTermPatternInput)s.
     ///
     /// See [`rule!`] for more information.
-    ///
     #[doc = discouraged!(ekege::rule::rule)]
     pub fn new_union(
         tree_term_pattern_input_a: TreeTermPatternInput,
@@ -464,10 +469,10 @@ impl TreeRulePayload {
     }
 }
 
-/// A [rule](rule!) representing term patterns in a tree-like fashion, using [tree term pattern](TreeTermPattern)s.
+/// A [rule](rule!) representing term patterns in a tree-like fashion, using
+/// [tree term pattern](TreeTermPattern)s.
 ///
 /// See [`rule!`] for more information.
-///
 #[doc = discouraged!(ekege::rule::rule)]
 pub struct TreeRule {
     query: TreeQuery,
@@ -475,10 +480,10 @@ pub struct TreeRule {
 }
 
 impl TreeRule {
-    /// Creates a new [tree rule](TreeRule) from a [tree query](TreeQuery) and a collection of [tree rule payload](TreeRulePayload)s.
+    /// Creates a new [tree rule](TreeRule) from a [tree query](TreeQuery) and a
+    /// collection of [tree rule payload](TreeRulePayload)s.
     ///
     /// See [`rule!`] for more information.
-    ///
     #[doc = discouraged!(ekege::rule::rule)]
     pub fn new(query: TreeQuery, payloads: impl IntoIterator<Item = TreeRulePayload>) -> Self {
         Self {
@@ -514,13 +519,11 @@ impl From<&TreeRule> for FlatRule {
     }
 }
 
-#[derive(Debug)]
 pub(crate) enum FlatMapTermPatternInput {
     QueryVariable(QueryVariable),
     TermId(TermId),
 }
 
-#[derive(Debug)]
 struct FlatMapTermPattern {
     map_id: MapId,
     inputs: Vec<FlatMapTermPatternInput>,
@@ -603,7 +606,6 @@ impl From<FlatQuery> for QueryPlan {
     }
 }
 
-#[derive(Debug)]
 pub(crate) enum FlatTermPatternInput {
     QueryVariable(QueryVariable),
     TermId(TermId),
@@ -611,6 +613,15 @@ pub(crate) enum FlatTermPatternInput {
 }
 
 impl FlatTermPatternInput {
+    fn assert_ids_are_local(&self, database_id: DatabaseId) {
+        match self {
+            FlatTermPatternInput::TermId(term_id) => {
+                Database::assert_id_is_local_inner(database_id, *term_id, "term id")
+            }
+            _ => {}
+        }
+    }
+
     pub(crate) fn substitute(
         &self,
         substitution: &BTreeMap<QueryVariable, TermId>,
@@ -624,13 +635,20 @@ impl FlatTermPatternInput {
     }
 }
 
-#[derive(Debug)]
 pub(crate) struct FlatTermPattern {
     pub(crate) map_id: MapId,
     pub(crate) inputs: Vec<FlatTermPatternInput>,
 }
 
 impl FlatTermPattern {
+    fn assert_ids_are_local(&self, database_id: DatabaseId) {
+        Database::assert_id_is_local_inner(database_id, self.map_id, "map id");
+
+        for input in &self.inputs {
+            input.assert_ids_are_local(database_id);
+        }
+    }
+
     pub(crate) fn substitute(
         &self,
         bump: &'static Bump,
@@ -647,10 +665,28 @@ impl FlatTermPattern {
     }
 }
 
-#[derive(Debug)]
 pub(crate) enum FlatRulePayload {
     Creation(FlatTermPattern),
     Union(FlatTermPatternInput, FlatTermPatternInput),
+}
+
+impl FlatRulePayload {
+    fn assert_ids_are_local(&self, database_id: DatabaseId) {
+        match self {
+            FlatRulePayload::Creation(flat_term_pattern) => {
+                flat_term_pattern.assert_ids_are_local(database_id);
+            }
+            FlatRulePayload::Union(flat_term_pattern_input_a, flat_term_pattern_input_b) => {
+                flat_term_pattern_input_a.assert_ids_are_local(database_id);
+                flat_term_pattern_input_b.assert_ids_are_local(database_id);
+            }
+        }
+    }
+}
+
+pub(crate) struct FlatRule {
+    pub(crate) query_plan: QueryPlan,
+    pub(crate) payloads: Vec<FlatRulePayload>,
 }
 
 pub(crate) struct ExecutableFlatRule<'flat_rule> {
@@ -658,13 +694,15 @@ pub(crate) struct ExecutableFlatRule<'flat_rule> {
     pub(crate) payloads: &'flat_rule [FlatRulePayload],
 }
 
-#[derive(Debug)]
-pub(crate) struct FlatRule {
-    pub(crate) query_plan: QueryPlan,
-    pub(crate) payloads: Vec<FlatRulePayload>,
-}
-
 impl FlatRule {
+    pub(crate) fn assert_ids_are_local(&self, database_id: DatabaseId) {
+        self.query_plan.assert_ids_are_local(database_id);
+
+        for payload in &self.payloads {
+            payload.assert_ids_are_local(database_id);
+        }
+    }
+
     // The colt ID to require new term is passed to allow for semi-naive evaluation
     pub(crate) fn to_executable(&self, colt_id_to_require_new_terms: ColtId) -> ExecutableFlatRule {
         ExecutableFlatRule {

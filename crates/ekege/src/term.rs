@@ -5,7 +5,8 @@ use std::{
 };
 
 use ekege::discouraged;
-/// Creates a new [tree term](TreeTerm). The tree term stores other, nested tree terms, and [term ID](TermId)s.
+/// Creates a new [tree term](TreeTerm). The tree term stores other, nested tree
+/// terms, and [term ID](TermId)s.
 ///
 /// See [`TreeTerm`] for more information.
 ///
@@ -32,45 +33,47 @@ use ekege::discouraged;
 /// ```
 pub use ekege_macros::term;
 
-use crate::{id::Id, map::MapId};
+use crate::{
+    id::{Id, SubId},
+    map::MapId,
+};
 
 /// An ID type to refer to terms, up to equivalence.
 ///
 /// See [`database`](ekege::database) for more information.
-pub type TermId = Id;
+pub type TermId = SubId;
 
-/// An item in a [tree term](TreeTerm). A tree term is made out of [term ID](TermId)s and other nested tree terms.
+/// An item in a [tree term](TreeTerm). A tree term is made out of [term
+/// ID](TermId)s and other nested tree terms.
 ///
 /// See [`TreeTerm`] for more information.
-///
 #[doc = discouraged!(ekege::term::term)]
 #[derive(Clone)]
 pub enum TreeTermInput {
     /// A [tree term](TreeTerm) to be used in another tree term.
     ///
     /// See [`TreeTerm`] for more information.
-    ///
     #[doc = discouraged!(ekege::term::term)]
     TreeTerm(TreeTerm),
     /// A [term ID](TermId) to be used in another tree term.
     ///
     /// See [`TreeTerm`] for more information.
-    ///
     #[doc = discouraged!(ekege::term::term)]
     TermId(TermId),
 }
 
-/// A representation of an uninterpreted term, made of [term ID](TermId)s and other nested terms.
+/// A representation of an uninterpreted term, made of [term ID](TermId)s and
+/// other nested terms.
 ///
 /// See [`database`](ekege::database) for more information.
-///
 #[doc = discouraged!(ekege::term::term)]
 ///
 /// # Examples
 ///
-/// Consider the term `multiply(a, add(b, c))`. It corresponds to the expression `a * (b + c)`.
-/// Here, `a`, `b`, and `c` are all term IDs, and thus represent many equivalent terms. Despite this,
-/// the resulting term still has noticeable structure, as these term IDs are combined to create a larger term.
+/// Consider the term `multiply(a, add(b, c))`. It corresponds to the expression
+/// `a * (b + c)`. Here, `a`, `b`, and `c` are all term IDs, and thus represent
+/// many equivalent terms. Despite this, the resulting term still has noticeable
+/// structure, as these term IDs are combined to create a larger term.
 ///
 /// Using [`TreeTerm`], we would represent this term as:
 ///
@@ -103,7 +106,8 @@ pub enum TreeTermInput {
 /// );
 /// ```
 ///
-/// Alternatively, we can represent this term more idiomatically by using the [`term!`] macro:
+/// Alternatively, we can represent this term more idiomatically by using the
+/// [`term!`] macro:
 ///
 /// ```rust
 /// # use ekege::{database::Database, map::map_signature, term::{TreeTerm, TreeTermInput, term}};
@@ -122,7 +126,8 @@ pub enum TreeTermInput {
 /// term! { multiply(a, add(b, c)) };
 /// ```
 ///
-/// This expands to the same output as when using [`TreeTerm`] directly, but is simpler to understand and change.
+/// This expands to the same output as when using [`TreeTerm`] directly, but is
+/// simpler to understand and change.
 #[derive(Clone)]
 pub struct TreeTerm {
     pub(crate) map_id: MapId,
@@ -130,9 +135,8 @@ pub struct TreeTerm {
 }
 
 impl TreeTerm {
-    /// Creates a new [tree term](TreeTerm), existing in a map identified by a [map ID](MapId), and taking
-    /// a collection of [inputs](TreeTermInput).
-    ///
+    /// Creates a new [tree term](TreeTerm), existing in a map identified by a
+    /// [map ID](MapId), and taking a collection of [inputs](TreeTermInput).
     #[doc = discouraged!(ekege::term::term)]
     pub fn new(map_id: MapId, inputs: impl IntoIterator<Item = TreeTermInput>) -> Self {
         Self {
@@ -142,15 +146,14 @@ impl TreeTerm {
     }
 }
 
-#[derive(Debug)]
 pub(crate) struct Node<T> {
     parent_term_id: TermId,
     rank: usize,
     value: T,
 }
 
-#[derive(Debug)]
 pub(crate) struct TermTable<T> {
+    main_id: Id,
     nodes: Vec<Node<T>>,
 }
 
@@ -158,13 +161,13 @@ impl<T> Index<TermId> for TermTable<T> {
     type Output = Node<T>;
 
     fn index(&self, index: TermId) -> &Self::Output {
-        &self.nodes[index.inner()]
+        &self.nodes[index.sub_id().inner()]
     }
 }
 
 impl<T> IndexMut<TermId> for TermTable<T> {
     fn index_mut(&mut self, index: TermId) -> &mut Self::Output {
-        &mut self.nodes[index.inner()]
+        &mut self.nodes[index.sub_id().inner()]
     }
 }
 
@@ -174,8 +177,11 @@ pub(crate) struct UnifyResult {
 }
 
 impl<T> TermTable<T> {
-    pub(crate) fn new() -> Self {
-        Self { nodes: vec![] }
+    pub(crate) fn new(main_id: Id) -> Self {
+        Self {
+            nodes: vec![],
+            main_id,
+        }
     }
 
     fn parent_term_id(&self, term_id: TermId) -> Option<TermId> {
@@ -185,7 +191,7 @@ impl<T> TermTable<T> {
     }
 
     pub(crate) fn insert_term(&mut self, value: T) -> TermId {
-        let term_id = Id::new(self.nodes.len());
+        let term_id = TermId::new(self.main_id, Id::new(self.nodes.len()));
 
         self.nodes.push(Node {
             parent_term_id: term_id, // No parent so term id is self
@@ -238,13 +244,7 @@ impl<T> TermTable<T> {
     }
 }
 
-impl<T> Default for TermTable<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct TermTuple<'a> {
     pub(crate) term_ids: bumpalo::collections::Vec<'a, TermId>,
 }

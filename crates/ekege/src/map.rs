@@ -9,29 +9,29 @@ use indexmap::{map::Entry, IndexMap};
 use rustc_hash::FxBuildHasher;
 
 use crate::{
-    id::Id,
+    id::SubId,
     term::{TermId, TermTuple},
 };
 
 pub(crate) type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
 
 /// An ID to identify a type in a [database](ekege::database::Database).
-pub type TypeId = Id;
+pub type TypeId = SubId;
 /// An ID to identify a map in a [database](ekege::database::Database).
-pub type MapId = Id;
+pub type MapId = SubId;
 
-#[derive(Debug)]
-/// The signature of a map contains the [type ID](TypeId)s each member's terms must have, and the type ID each
-/// term in the map will have.
+/// The signature of a map contains the [type ID](TypeId)s each member's terms
+/// must have, and the type ID each term in the map will have.
 pub struct MapSignature {
     input_type_ids: Vec<TypeId>,
     output_type_id: TypeId,
 }
 
 impl MapSignature {
-    /// Creates a new [signature](MapSignature) with the given input [type ID](TypeId)s and the
-    /// output type ID. It is recommended you use the [`map_signature!`] macro for creating a new
-    /// map signature, as using it is more readable.
+    /// Creates a new [signature](MapSignature) with the given input [type
+    /// ID](TypeId)s and the output type ID. It is recommended you use the
+    /// [`map_signature!`] macro for creating a new map signature, as using
+    /// it is more readable.
     pub fn new(input_type_ids: impl IntoIterator<Item = TypeId>, output_type_id: TypeId) -> Self {
         Self {
             input_type_ids: input_type_ids.into_iter().collect(),
@@ -39,11 +39,11 @@ impl MapSignature {
         }
     }
 
-    pub(crate) fn input_type_ids(&self) -> &[Id] {
+    pub(crate) fn input_type_ids(&self) -> &[SubId] {
         &self.input_type_ids
     }
 
-    pub(crate) fn output_type_id(&self) -> Id {
+    pub(crate) fn output_type_id(&self) -> SubId {
         self.output_type_id
     }
 }
