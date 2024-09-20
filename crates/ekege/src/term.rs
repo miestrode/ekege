@@ -34,7 +34,7 @@ use ekege::discouraged;
 pub use ekege_macros::term;
 
 use crate::{
-    id::{Id, SubId},
+    id::{LargeId, SmallId, SubId},
     map::MapId,
 };
 
@@ -153,7 +153,7 @@ pub(crate) struct Node<T> {
 }
 
 pub(crate) struct TermTable<T> {
-    main_id: Id,
+    main_id: SmallId,
     nodes: Vec<Node<T>>,
 }
 
@@ -177,7 +177,7 @@ pub(crate) struct UnifyResult {
 }
 
 impl<T> TermTable<T> {
-    pub(crate) fn new(main_id: Id) -> Self {
+    pub(crate) fn new(main_id: SmallId) -> Self {
         Self {
             nodes: vec![],
             main_id,
@@ -191,7 +191,7 @@ impl<T> TermTable<T> {
     }
 
     pub(crate) fn insert_term(&mut self, value: T) -> TermId {
-        let term_id = TermId::new(self.main_id, Id::new(self.nodes.len()));
+        let term_id = TermId::new(self.main_id, LargeId::new(self.nodes.len()));
 
         self.nodes.push(Node {
             parent_term_id: term_id, // No parent so term id is self

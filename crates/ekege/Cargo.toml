@@ -18,6 +18,7 @@ either.workspace = true
 rustc-hash.workspace = true
 bumpalo.workspace = true
 hashbrown.workspace = true
+bitfield-struct.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

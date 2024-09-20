@@ -163,14 +163,14 @@ pub use ekege_macros::rule;
 use super::plan::ExecutableQueryPlan;
 use crate::database::Database;
 use crate::database::DatabaseId;
+use crate::id::LargeId;
 use crate::{
-    id::Id,
     map::MapId,
     plan::{ColtId, QueryPlan, QueryPlanSection, SchematicAtom, SchematicAtomInner, SubMapTerm},
     term::{TermId, TermTuple},
 };
 
-pub(crate) type QueryVariable = Id;
+pub(crate) type QueryVariable = LargeId;
 
 struct QueryVariableTable {
     variables: usize,

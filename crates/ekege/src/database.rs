@@ -55,14 +55,14 @@ use ekege_macros::map_signature;
 
 use crate::{
     colt::Colt,
-    id::{AtomicIdGenerator, Id, SubId, SubIdGenerator},
+    id::{AtomicIdGenerator, LargeId, SmallId, SubId, SubIdGenerator},
     map::{FxIndexMap, Map, MapId, MapSignature, MapTerms, SeparatedMapTerm, TypeId},
     plan::{ColtId, ExecutableQueryPlan},
     rule::{ExecutableFlatRule, FlatRulePayload, QueryVariable},
     term::{TermId, TermTable, TermTuple, TreeTerm, TreeTermInput, UnifyResult},
 };
 
-pub(crate) type DatabaseId = Id;
+pub(crate) type DatabaseId = SmallId;
 
 static DATABASE_ID_GENERATOR: AtomicIdGenerator = AtomicIdGenerator::new();
 
@@ -109,6 +109,11 @@ pub struct Database {
 
 impl Database {
     /// Creates a new, empty database, with no terms, types, or maps stored.
+    ///
+    /// # Panics
+    ///
+    /// Throughout a program's run, no more than 256 databases may be created. If
+    /// this limit is passed, the program will panic.
     pub fn new() -> Self {
         let id = DATABASE_ID_GENERATOR.generate_id();
 
@@ -164,7 +169,7 @@ impl Database {
     /// database.new_term(&term! { add(a, b) });
     /// ```
     pub fn new_map(&mut self, signature: MapSignature) -> MapId {
-        let id = MapId::new(self.id, Id::new(self.maps.len()));
+        let id = MapId::new(self.id, LargeId::new(self.maps.len()));
 
         for (index, type_id) in signature.input_type_ids().iter().enumerate() {
             self.assert_id_is_local(

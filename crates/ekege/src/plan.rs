@@ -4,12 +4,12 @@ use super::rule::QueryVariable;
 use crate::{
     colt::Captures,
     database::{Database, DatabaseId},
-    id::Id,
+    id::LargeId,
     map::{MapId, SeparatedMapTerm},
     term::{TermId, TermTable},
 };
 
-pub(crate) type ColtId = Id;
+pub(crate) type ColtId = LargeId;
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
 pub(crate) enum SchematicAtomInner {
