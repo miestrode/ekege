@@ -26,7 +26,6 @@ fn generate_regular_random_graph(
     let rules = [
         rule! { edge('x, 'y) -> path('x, 'y) },
         rule! { path('x, 'y), path('y, 'z) -> path('x, 'z) },
-        rule! { path('y, 'z), path('x, 'y) -> path('x, 'z) },
     ];
 
     let mut nodes = vec![database.new_constant(node)];
