@@ -9,16 +9,16 @@ use indexmap::{map::Entry, IndexMap};
 use rustc_hash::FxBuildHasher;
 
 use crate::{
-    id::SubId,
+    id::GroupMemberId,
     term::{TermId, TermTuple},
 };
 
 pub(crate) type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
 
 /// An ID to identify a type in a [database](ekege::database::Database).
-pub type TypeId = SubId;
+pub type TypeId = GroupMemberId;
 /// An ID to identify a map in a [database](ekege::database::Database).
-pub type MapId = SubId;
+pub type MapId = GroupMemberId;
 
 /// The signature of a map contains the [type ID](TypeId)s each member's terms
 /// must have, and the type ID each term in the map will have.
@@ -39,11 +39,11 @@ impl MapSignature {
         }
     }
 
-    pub(crate) fn input_type_ids(&self) -> &[SubId] {
+    pub(crate) fn input_type_ids(&self) -> &[GroupMemberId] {
         &self.input_type_ids
     }
 
-    pub(crate) fn output_type_id(&self) -> SubId {
+    pub(crate) fn output_type_id(&self) -> GroupMemberId {
         self.output_type_id
     }
 }

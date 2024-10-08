@@ -23,7 +23,6 @@ enum ColtStorage<'a> {
     MapTermsRange(Range<usize>),
 }
 
-// TODO: No need to own all of this information
 pub(crate) struct Colt<'a> {
     map_terms: &'a MapTerms,
     bump: &'a Bump,

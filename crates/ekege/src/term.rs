@@ -34,14 +34,14 @@ use ekege::discouraged;
 pub use ekege_macros::term;
 
 use crate::{
-    id::{LargeId, SmallId, SubId},
+    id::{GroupId, GroupMemberId, MemberId},
     map::MapId,
 };
 
 /// An ID type to refer to terms, up to equivalence.
 ///
 /// See [`database`](ekege::database) for more information.
-pub type TermId = SubId;
+pub type TermId = GroupMemberId;
 
 /// An item in a [tree term](TreeTerm). A tree term is made out of [term
 /// ID](TermId)s and other nested tree terms.
@@ -153,7 +153,7 @@ pub(crate) struct Node<T> {
 }
 
 pub(crate) struct TermTable<T> {
-    main_id: SmallId,
+    main_id: GroupId,
     nodes: Vec<Node<T>>,
 }
 
@@ -161,13 +161,13 @@ impl<T> Index<TermId> for TermTable<T> {
     type Output = Node<T>;
 
     fn index(&self, index: TermId) -> &Self::Output {
-        &self.nodes[index.sub_id().inner()]
+        &self.nodes[index.member_id().inner()]
     }
 }
 
 impl<T> IndexMut<TermId> for TermTable<T> {
     fn index_mut(&mut self, index: TermId) -> &mut Self::Output {
-        &mut self.nodes[index.sub_id().inner()]
+        &mut self.nodes[index.member_id().inner()]
     }
 }
 
@@ -177,7 +177,7 @@ pub(crate) struct UnifyResult {
 }
 
 impl<T> TermTable<T> {
-    pub(crate) fn new(main_id: SmallId) -> Self {
+    pub(crate) fn new(main_id: GroupId) -> Self {
         Self {
             nodes: vec![],
             main_id,
@@ -191,7 +191,7 @@ impl<T> TermTable<T> {
     }
 
     pub(crate) fn insert_term(&mut self, value: T) -> TermId {
-        let term_id = TermId::new(self.main_id, LargeId::new(self.nodes.len()));
+        let term_id = TermId::new(self.main_id, MemberId::new(self.nodes.len()));
 
         self.nodes.push(Node {
             parent_term_id: term_id, // No parent so term id is self

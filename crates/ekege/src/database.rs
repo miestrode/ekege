@@ -55,16 +55,16 @@ use ekege_macros::map_signature;
 
 use crate::{
     colt::Colt,
-    id::{AtomicIdGenerator, LargeId, SmallId, SubId, SubIdGenerator},
+    id::{AtomicGroupIdGenerator, GroupId, GroupMemberId, GroupMemberIdGenerator, MemberId},
     map::{FxIndexMap, Map, MapId, MapSignature, MapTerms, SeparatedMapTerm, TypeId},
     plan::{ColtId, ExecutableQueryPlan},
     rule::{ExecutableFlatRule, FlatRulePayload, QueryVariable},
     term::{TermId, TermTable, TermTuple, TreeTerm, TreeTermInput, UnifyResult},
 };
 
-pub(crate) type DatabaseId = SmallId;
+pub(crate) type DatabaseId = GroupId;
 
-static DATABASE_ID_GENERATOR: AtomicIdGenerator = AtomicIdGenerator::new();
+static DATABASE_ID_GENERATOR: AtomicGroupIdGenerator = AtomicGroupIdGenerator::new();
 
 struct PendingRewrite {
     old_term_id: TermId,
@@ -102,7 +102,7 @@ pub struct Database {
     id: DatabaseId,
     maps: Vec<Map>,
     term_type_table: TermTable<TypeId>,
-    type_id_generator: SubIdGenerator,
+    type_id_generator: GroupMemberIdGenerator,
     pending_rewrites: Vec<PendingRewrite>,
     bump: DatabaseBump,
 }
@@ -112,15 +112,15 @@ impl Database {
     ///
     /// # Panics
     ///
-    /// Throughout a program's run, no more than 256 databases may be created. If
-    /// this limit is passed, the program will panic.
+    /// Throughout a program's run, no more than 256 databases may be created.
+    /// If this limit is passed, the program will panic.
     pub fn new() -> Self {
         let id = DATABASE_ID_GENERATOR.generate_id();
 
         Self {
             maps: Vec::new(),
             term_type_table: TermTable::new(id),
-            type_id_generator: SubIdGenerator::new(id),
+            type_id_generator: GroupMemberIdGenerator::new(id),
             pending_rewrites: Vec::new(),
             bump: DatabaseBump::new(),
             id,
@@ -133,18 +133,18 @@ impl Database {
 
     pub(crate) fn assert_id_is_local_inner(
         database_id: DatabaseId,
-        sub_id: SubId,
+        sub_id: GroupMemberId,
         description: &str,
     ) {
         assert!(
-            database_id == sub_id.main_id(),
+            database_id == sub_id.group_id(),
             "{description} is from database with id {}, which is foreign to this database (id {})",
-            sub_id.main_id(),
+            sub_id.group_id(),
             database_id
         );
     }
 
-    fn assert_id_is_local(&self, sub_id: SubId, description: &str) {
+    fn assert_id_is_local(&self, sub_id: GroupMemberId, description: &str) {
         Self::assert_id_is_local_inner(self.id, sub_id, description);
     }
 
@@ -169,7 +169,7 @@ impl Database {
     /// database.new_term(&term! { add(a, b) });
     /// ```
     pub fn new_map(&mut self, signature: MapSignature) -> MapId {
-        let id = MapId::new(self.id, LargeId::new(self.maps.len()));
+        let id = MapId::new(self.id, MemberId::new(self.maps.len()));
 
         for (index, type_id) in signature.input_type_ids().iter().enumerate() {
             self.assert_id_is_local(
@@ -249,6 +249,16 @@ impl Database {
             .or_insert_with(|| term_type_table.insert_term(map.signature.output_type_id()))
     }
 
+    fn map_inner(database_id: DatabaseId, maps: &[Map], map_id: MapId) -> &Map {
+        Self::assert_id_is_local_inner(database_id, map_id, "map id");
+
+        &maps[map_id.member_id().inner()]
+    }
+
+    pub(crate) fn map(&self, map_id: MapId) -> &Map {
+        Self::map_inner(self.id(), &self.maps, map_id)
+    }
+
     fn new_term_inner(
         database_id: DatabaseId,
         maps: &[Map],
@@ -256,7 +266,7 @@ impl Database {
         bump: &'static Bump,
         term: &TreeTerm,
     ) -> TermId {
-        Self::assert_id_is_local_inner(database_id, term.map_id, "map id");
+        let map = Self::map_inner(database_id, maps, term.map_id);
 
         let term_tuple = TermTuple {
             term_ids: term
@@ -272,8 +282,6 @@ impl Database {
                 })
                 .collect_in(bump),
         };
-
-        let map = &maps[term.map_id.sub_id().inner()];
 
         assert_eq!(
             map.signature.input_type_ids().len(),
@@ -360,7 +368,7 @@ impl Database {
     /// );
     /// ```
     pub fn term_id(&self, term: &TreeTerm) -> Option<TermId> {
-        self.assert_id_is_local(term.map_id, "map id");
+        let map = self.map(term.map_id);
 
         let map_member = TermTuple {
             term_ids: term
@@ -385,9 +393,7 @@ impl Database {
                 )?,
         };
 
-        self.maps[term.map_id.sub_id().inner()]
-            .map_terms
-            .get(&map_member)
+        map.map_terms.get(&map_member)
     }
 
     /// Adds a new term to the database, with a given [type](TypeId).
@@ -413,7 +419,7 @@ impl Database {
         let constant_map = self.new_map(map_signature! { () -> type_id });
 
         Self::insert_map_member(
-            &self.maps[constant_map.sub_id().inner()],
+            &self.maps[constant_map.member_id().inner()],
             &mut self.term_type_table,
             TermTuple {
                 // `Database`'s drop order ensures this reference is dropped
@@ -558,7 +564,7 @@ impl Database {
                 (
                     colt_id,
                     Colt::new(
-                        &maps[schematic.map_id.sub_id().inner()],
+                        &maps[schematic.map_id.member_id().inner()],
                         bump,
                         &schematic.sub_schematics,
                         schematic.new_terms_required,
@@ -627,7 +633,7 @@ impl Database {
                             );
 
                             created_terms.push(Database::insert_map_member(
-                                &self.maps[term.map_id.sub_id().inner()],
+                                &self.maps[term.map_id.member_id().inner()],
                                 &mut self.term_type_table,
                                 inputs,
                             ));
@@ -807,8 +813,8 @@ impl Database {
             };
 
         fn is_substitution_relevant(
-            member: &[SubId],
-            substitution: &BTreeMap<SubId, SubId>,
+            member: &[GroupMemberId],
+            substitution: &BTreeMap<GroupMemberId, GroupMemberId>,
         ) -> bool {
             member
                 .iter()

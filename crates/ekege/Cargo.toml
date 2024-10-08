@@ -2,7 +2,7 @@
 name = "ekege"
 version = "0.1.0"
 edition = "2021"
-description = "A different approach to an E-graph library"
+description = "An E-graph library that's built like a database"
 authors = ["Yoav Grimland <miestrode@proton.me>"]
 
 [lints]

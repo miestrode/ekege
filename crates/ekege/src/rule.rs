@@ -161,16 +161,15 @@ pub use ekege_macros::rewrite;
 pub use ekege_macros::rule;
 
 use super::plan::ExecutableQueryPlan;
-use crate::database::Database;
-use crate::database::DatabaseId;
-use crate::id::LargeId;
 use crate::{
+    database::{Database, DatabaseId},
+    id::ItemId,
     map::MapId,
     plan::{ColtId, QueryPlan, QueryPlanSection, SchematicAtom, SchematicAtomInner, SubMapTerm},
     term::{TermId, TermTuple},
 };
 
-pub(crate) type QueryVariable = LargeId;
+pub(crate) type QueryVariable = ItemId;
 
 struct QueryVariableTable {
     variables: usize,
@@ -296,7 +295,7 @@ impl TreeTermPattern {
     fn extend_flat_map_term_patterns(
         &self,
         query_variable_table: &mut QueryVariableTable,
-        flat_query_term_patterns: &mut Vec<FlatMapTermPattern>,
+        flat_map_term_patterns: &mut Vec<FlatMapTermPattern>,
     ) -> QueryVariable {
         let mut inputs = self
             .inputs
@@ -314,7 +313,7 @@ impl TreeTermPattern {
                     FlatMapTermPatternInput::QueryVariable(
                         tree_term_pattern.extend_flat_map_term_patterns(
                             query_variable_table,
-                            flat_query_term_patterns,
+                            flat_map_term_patterns,
                         ),
                     )
                 }
@@ -333,7 +332,7 @@ impl TreeTermPattern {
             inputs,
         };
 
-        flat_query_term_patterns.push(root_flat_map_term_pattern);
+        flat_map_term_patterns.push(root_flat_map_term_pattern);
 
         root_flat_map_term_pattern_query_variable
     }
@@ -473,7 +472,8 @@ impl TreeRulePayload {
 /// See [`rule!`] for more information.
 #[doc = discouraged!(ekege::rule::rule)]
 pub struct TreeRule {
-    query: TreeQuery,
+    // TODO: MAKE PRIVATE
+    pub(crate) query: TreeQuery,
     payloads: Vec<TreeRulePayload>,
 }
 
@@ -517,18 +517,34 @@ impl From<&TreeRule> for FlatRule {
     }
 }
 
+#[derive(Debug, Clone)]
 pub(crate) enum FlatMapTermPatternInput {
     QueryVariable(QueryVariable),
     TermId(TermId),
 }
 
-struct FlatMapTermPattern {
-    map_id: MapId,
-    inputs: Vec<FlatMapTermPatternInput>,
+#[derive(Debug, Clone)]
+pub(crate) struct FlatMapTermPattern {
+    pub(crate) map_id: MapId,
+    pub(crate) inputs: Vec<FlatMapTermPatternInput>,
 }
 
-struct FlatQuery {
-    map_term_patterns: Vec<FlatMapTermPattern>,
+pub(crate) struct FlatQuery {
+    pub(crate) map_term_patterns: Vec<FlatMapTermPattern>,
+}
+
+impl From<&TreeQuery> for FlatQuery {
+    fn from(value: &TreeQuery) -> Self {
+        let mut map_term_patterns = Vec::new();
+        let mut query_variable_table = QueryVariableTable::new();
+
+        for tree_term_pattern in &value.term_patterns {
+            tree_term_pattern
+                .extend_flat_map_term_patterns(&mut query_variable_table, &mut map_term_patterns);
+        }
+
+        Self { map_term_patterns }
+    }
 }
 
 impl From<FlatQuery> for QueryPlan {
