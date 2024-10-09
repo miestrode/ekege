@@ -131,42 +131,18 @@ extern crate self as ekege;
 
 pub(crate) use ekege_macros::discouraged;
 
-mod colt;
 pub mod database;
 pub mod domain;
+mod estimation;
+mod graph;
 pub mod id;
 pub mod map;
+mod optimizer;
 mod plan;
-mod query;
 pub mod rule;
 pub mod term;
 
-pub fn testt() {
-    let mut database = database::Database::new();
+// TODO: Remove this once `precise_capturing` is stabilized
+pub(crate) trait Captures<U> {}
 
-    let boolean = database.new_type();
-
-    let or = database.new_map(ekege_macros::map_signature! { (boolean, boolean) -> boolean });
-    let and = database.new_map(ekege_macros::map_signature! { (boolean, boolean) -> boolean });
-    let not = database.new_map(ekege_macros::map_signature! { (boolean,) -> boolean });
-
-    let rule = ekege_macros::rule! { or('a, or('b, or('c, 'd))), and('e, 'd) -> };
-
-    let zero = database.new_constant(boolean);
-    let one = database.new_constant(boolean);
-
-    let x = database.new_term(&ekege_macros::term! { or(one, zero) });
-    let x = database.new_term(&ekege_macros::term! { or(one, x) });
-    let x = database.new_term(&ekege_macros::term! { or(one, x) });
-    let x = database.new_term(&ekege_macros::term! { or(one, x) });
-    let x = database.new_term(&ekege_macros::term! { or(one, x) });
-
-    let graph = query::graph::QueryGraph::from(rule::FlatQuery::from(&rule.query));
-
-    println!("{graph:#?}");
-
-    println!(
-        "{:#?}",
-        query::optimizer::find_optimal_plan(&query::estimation::Estimator::new(&database), graph)
-    );
-}
+impl<T: ?Sized, U> Captures<U> for T {}

@@ -1,5 +1,6 @@
 //! Items related to the rules used in a [domain](ekege::domain::Domain).
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use bumpalo::{collections::CollectIn, Bump};
 use ekege::discouraged;
@@ -160,12 +161,11 @@ pub use ekege_macros::rewrite;
 /// ```
 pub use ekege_macros::rule;
 
-use super::plan::ExecutableQueryPlan;
+use crate::plan::DhjExpression;
 use crate::{
     database::{Database, DatabaseId},
     id::ItemId,
     map::MapId,
-    plan::{ColtId, QueryPlan, QueryPlanSection, SchematicAtom, SchematicAtomInner, SubMapTerm},
     term::{TermId, TermTuple},
 };
 
@@ -183,9 +183,7 @@ impl QueryVariableTable {
             name_variable_table: BTreeMap::new(),
         }
     }
-}
 
-impl QueryVariableTable {
     fn get_or_create_query_variable(&mut self, query_variable: String) -> QueryVariable {
         *self
             .name_variable_table
@@ -198,6 +196,162 @@ impl QueryVariableTable {
         *query_variables += 1;
 
         QueryVariable::new(new_query_variable)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum FlatMapTermPatternInput {
+    QueryVariable(QueryVariable),
+    TermId(TermId),
+}
+
+impl FlatMapTermPatternInput {
+    fn assert_ids_are_local(&self, database_id: DatabaseId) {
+        match self {
+            FlatMapTermPatternInput::TermId(term_id) => {
+                Database::assert_id_is_local_inner(database_id, *term_id, "term id");
+            }
+            FlatMapTermPatternInput::QueryVariable(_) => {}
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct FlatMapTermPattern {
+    pub(crate) map_id: MapId,
+    pub(crate) inputs: Vec<FlatMapTermPatternInput>,
+    new_terms_required: bool,
+}
+
+impl FlatMapTermPattern {
+    pub(crate) fn assert_ids_are_local(&self, database_id: DatabaseId) {
+        Database::assert_id_is_local_inner(database_id, self.map_id, "map id");
+
+        for input in &self.inputs {
+            input.assert_ids_are_local(database_id);
+        }
+    }
+}
+
+pub(crate) struct FlatQuery {
+    pub(crate) map_term_patterns: Vec<FlatMapTermPattern>,
+}
+
+impl FlatQuery {
+    fn into_dhj_expression(self) -> Option<Rc<DhjExpression>> {
+        let mut map_term_patterns = self.map_term_patterns.into_iter();
+        let mut expression = Rc::new(DhjExpression::FlatMapTermPattern(Rc::new(
+            map_term_patterns.next()?,
+        )));
+
+        for pattern in map_term_patterns {
+            let lookup = Rc::new(DhjExpression::FlatMapTermPattern(Rc::new(pattern)));
+
+            expression = Rc::new(DhjExpression::Expand {
+                child: Rc::new(DhjExpression::Lookup {
+                    probe: expression,
+                    lookup: lookup.clone(),
+                }),
+                lookup,
+            });
+        }
+
+        Some(expression)
+    }
+}
+
+#[derive(Clone)]
+pub(crate) enum FlatTermPatternInput {
+    QueryVariable(QueryVariable),
+    TermId(TermId),
+    PreviouslyCreatedFlatTermIndex(usize),
+}
+
+impl FlatTermPatternInput {
+    fn assert_ids_are_local(&self, database_id: DatabaseId) {
+        if let FlatTermPatternInput::TermId(term_id) = self {
+            Database::assert_id_is_local_inner(database_id, *term_id, "term id")
+        }
+    }
+
+    pub(crate) fn substitute(
+        &self,
+        substitution: &BTreeMap<QueryVariable, TermId>,
+        created_terms: &[TermId],
+    ) -> TermId {
+        match self {
+            FlatTermPatternInput::QueryVariable(variable) => *substitution.get(variable).unwrap(),
+            FlatTermPatternInput::TermId(term_id) => *term_id,
+            FlatTermPatternInput::PreviouslyCreatedFlatTermIndex(index) => created_terms[*index],
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct FlatTermPattern {
+    pub(crate) map_id: MapId,
+    pub(crate) inputs: Vec<FlatTermPatternInput>,
+}
+
+impl FlatTermPattern {
+    fn assert_ids_are_local(&self, database_id: DatabaseId) {
+        Database::assert_id_is_local_inner(database_id, self.map_id, "map id");
+
+        for input in &self.inputs {
+            input.assert_ids_are_local(database_id);
+        }
+    }
+
+    pub(crate) fn substitute(
+        &self,
+        bump: &'static Bump,
+        substitution: &BTreeMap<QueryVariable, TermId>,
+        created_terms: &[TermId],
+    ) -> TermTuple<'static> {
+        TermTuple {
+            term_ids: self
+                .inputs
+                .iter()
+                .map(|input| input.substitute(substitution, created_terms))
+                .collect_in(bump),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) enum FlatRulePayload {
+    Creation(FlatTermPattern),
+    Union(FlatTermPatternInput, FlatTermPatternInput),
+}
+
+impl FlatRulePayload {
+    fn assert_ids_are_local(&self, database_id: DatabaseId) {
+        match self {
+            FlatRulePayload::Creation(flat_term_pattern) => {
+                flat_term_pattern.assert_ids_are_local(database_id);
+            }
+            FlatRulePayload::Union(flat_term_pattern_input_a, flat_term_pattern_input_b) => {
+                flat_term_pattern_input_a.assert_ids_are_local(database_id);
+                flat_term_pattern_input_b.assert_ids_are_local(database_id);
+            }
+        }
+    }
+}
+
+pub(crate) struct FlatRule {
+    pub(crate) query: Option<Rc<DhjExpression>>,
+    pub(crate) payloads: Vec<FlatRulePayload>,
+}
+
+impl FlatRule {
+    pub(crate) fn assert_ids_are_local(&self, database_id: DatabaseId) {
+        if let Some(expression) = &self.query {
+            expression.assert_ids_are_local(database_id)
+        }
+
+        for payload in &self.payloads {
+            payload.assert_ids_are_local(database_id);
+        }
     }
 }
 
@@ -330,6 +484,7 @@ impl TreeTermPattern {
         let root_flat_map_term_pattern = FlatMapTermPattern {
             map_id: self.map_id,
             inputs,
+            new_terms_required: false,
         };
 
         flat_map_term_patterns.push(root_flat_map_term_pattern);
@@ -472,8 +627,7 @@ impl TreeRulePayload {
 /// See [`rule!`] for more information.
 #[doc = discouraged!(ekege::rule::rule)]
 pub struct TreeRule {
-    // TODO: MAKE PRIVATE
-    pub(crate) query: TreeQuery,
+    query: TreeQuery,
     payloads: Vec<TreeRulePayload>,
 }
 
@@ -489,20 +643,18 @@ impl TreeRule {
             payloads: payloads.into_iter().collect(),
         }
     }
-}
 
-impl From<&TreeRule> for FlatRule {
-    fn from(value: &TreeRule) -> Self {
+    pub(crate) fn to_flat_rules(&self) -> impl Iterator<Item = FlatRule> {
         let mut map_term_patterns = Vec::new();
         let mut flat_rule_payloads = Vec::new();
         let mut query_variable_table = QueryVariableTable::new();
 
-        for tree_term_pattern in &value.query.term_patterns {
+        for tree_term_pattern in &self.query.term_patterns {
             tree_term_pattern
                 .extend_flat_map_term_patterns(&mut query_variable_table, &mut map_term_patterns);
         }
 
-        for tree_rule_payload in &value.payloads {
+        for tree_rule_payload in &self.payloads {
             tree_rule_payload.extend_flat_rule_payloads(
                 &mut query_variable_table,
                 &mut 0,
@@ -510,218 +662,17 @@ impl From<&TreeRule> for FlatRule {
             );
         }
 
-        Self {
-            query_plan: FlatQuery { map_term_patterns }.into(),
-            payloads: flat_rule_payloads,
-        }
-    }
-}
+        (0..map_term_patterns.len()).map(move |index| {
+            let mut new_map_term_patterns = map_term_patterns.clone();
+            new_map_term_patterns[index].new_terms_required = true;
 
-#[derive(Debug, Clone)]
-pub(crate) enum FlatMapTermPatternInput {
-    QueryVariable(QueryVariable),
-    TermId(TermId),
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct FlatMapTermPattern {
-    pub(crate) map_id: MapId,
-    pub(crate) inputs: Vec<FlatMapTermPatternInput>,
-}
-
-pub(crate) struct FlatQuery {
-    pub(crate) map_term_patterns: Vec<FlatMapTermPattern>,
-}
-
-impl From<&TreeQuery> for FlatQuery {
-    fn from(value: &TreeQuery) -> Self {
-        let mut map_term_patterns = Vec::new();
-        let mut query_variable_table = QueryVariableTable::new();
-
-        for tree_term_pattern in &value.term_patterns {
-            tree_term_pattern
-                .extend_flat_map_term_patterns(&mut query_variable_table, &mut map_term_patterns);
-        }
-
-        Self { map_term_patterns }
-    }
-}
-
-impl From<FlatQuery> for QueryPlan {
-    fn from(query: FlatQuery) -> Self {
-        let mut plan_sections = Vec::new();
-
-        let mut variable_inclusion_map = BTreeMap::new();
-        let mut pattern_constant_atoms = BTreeMap::new();
-
-        for (pattern_index, pattern) in query.map_term_patterns.iter().enumerate() {
-            for (tuple_index, input) in pattern.inputs.iter().enumerate() {
-                match input {
-                    FlatMapTermPatternInput::QueryVariable(variable) => {
-                        variable_inclusion_map
-                            .entry(*variable)
-                            .or_insert(Vec::new())
-                            .push((pattern_index, tuple_index));
-                    }
-                    FlatMapTermPatternInput::TermId(term_id) => {
-                        pattern_constant_atoms
-                            .entry(pattern_index)
-                            .or_insert(Vec::new())
-                            .push(SchematicAtom {
-                                tuple_index,
-                                inner: SchematicAtomInner::TermId(*term_id),
-                            });
-                    }
+            FlatRule {
+                query: FlatQuery {
+                    map_term_patterns: new_map_term_patterns,
                 }
+                .into_dhj_expression(),
+                payloads: flat_rule_payloads.clone(),
             }
-        }
-
-        for pattern in &query.map_term_patterns {
-            let mut pattern_index_variables = BTreeMap::new();
-
-            for (variable, relevant_pattern_indices) in pattern.inputs.iter().filter_map(|input| {
-                if let FlatMapTermPatternInput::QueryVariable(variable) = input {
-                    variable_inclusion_map
-                        .remove(variable)
-                        .map(|relevant_pattern_indices| (variable, relevant_pattern_indices))
-                } else {
-                    None
-                }
-            }) {
-                for (pattern_index, tuple_index) in relevant_pattern_indices {
-                    let colt_id = ColtId::new(pattern_index);
-
-                    pattern_index_variables
-                        .entry(pattern_index)
-                        .or_insert(SubMapTerm {
-                            colt_id,
-                            map_id: query.map_term_patterns[pattern_index].map_id,
-                            atoms: pattern_constant_atoms
-                                .remove(&pattern_index)
-                                .unwrap_or(Vec::new()),
-                        })
-                        .atoms
-                        .push(SchematicAtom {
-                            tuple_index,
-                            inner: SchematicAtomInner::Variable(*variable),
-                        });
-                }
-            }
-
-            plan_sections.push(QueryPlanSection {
-                sub_map_terms: pattern_index_variables.into_values().collect(),
-            });
-        }
-
-        QueryPlan {
-            sections: plan_sections,
-            colt_ids: query.map_term_patterns.len(),
-        }
-    }
-}
-
-pub(crate) enum FlatTermPatternInput {
-    QueryVariable(QueryVariable),
-    TermId(TermId),
-    PreviouslyCreatedFlatTermIndex(usize),
-}
-
-impl FlatTermPatternInput {
-    fn assert_ids_are_local(&self, database_id: DatabaseId) {
-        if let FlatTermPatternInput::TermId(term_id) = self {
-            Database::assert_id_is_local_inner(database_id, *term_id, "term id")
-        }
-    }
-
-    pub(crate) fn substitute(
-        &self,
-        substitution: &BTreeMap<QueryVariable, TermId>,
-        created_terms: &[TermId],
-    ) -> TermId {
-        match self {
-            FlatTermPatternInput::QueryVariable(variable) => *substitution.get(variable).unwrap(),
-            FlatTermPatternInput::TermId(term_id) => *term_id,
-            FlatTermPatternInput::PreviouslyCreatedFlatTermIndex(index) => created_terms[*index],
-        }
-    }
-}
-
-pub(crate) struct FlatTermPattern {
-    pub(crate) map_id: MapId,
-    pub(crate) inputs: Vec<FlatTermPatternInput>,
-}
-
-impl FlatTermPattern {
-    fn assert_ids_are_local(&self, database_id: DatabaseId) {
-        Database::assert_id_is_local_inner(database_id, self.map_id, "map id");
-
-        for input in &self.inputs {
-            input.assert_ids_are_local(database_id);
-        }
-    }
-
-    pub(crate) fn substitute(
-        &self,
-        bump: &'static Bump,
-        substitution: &BTreeMap<QueryVariable, TermId>,
-        created_terms: &[TermId],
-    ) -> TermTuple<'static> {
-        TermTuple {
-            term_ids: self
-                .inputs
-                .iter()
-                .map(|input| input.substitute(substitution, created_terms))
-                .collect_in(bump),
-        }
-    }
-}
-
-pub(crate) enum FlatRulePayload {
-    Creation(FlatTermPattern),
-    Union(FlatTermPatternInput, FlatTermPatternInput),
-}
-
-impl FlatRulePayload {
-    fn assert_ids_are_local(&self, database_id: DatabaseId) {
-        match self {
-            FlatRulePayload::Creation(flat_term_pattern) => {
-                flat_term_pattern.assert_ids_are_local(database_id);
-            }
-            FlatRulePayload::Union(flat_term_pattern_input_a, flat_term_pattern_input_b) => {
-                flat_term_pattern_input_a.assert_ids_are_local(database_id);
-                flat_term_pattern_input_b.assert_ids_are_local(database_id);
-            }
-        }
-    }
-}
-
-pub(crate) struct FlatRule {
-    pub(crate) query_plan: QueryPlan,
-    pub(crate) payloads: Vec<FlatRulePayload>,
-}
-
-pub(crate) struct ExecutableFlatRule<'a> {
-    pub(crate) query_plan: ExecutableQueryPlan,
-    pub(crate) payloads: &'a [FlatRulePayload],
-}
-
-impl FlatRule {
-    pub(crate) fn assert_ids_are_local(&self, database_id: DatabaseId) {
-        self.query_plan.assert_ids_are_local(database_id);
-
-        for payload in &self.payloads {
-            payload.assert_ids_are_local(database_id);
-        }
-    }
-
-    // The colt ID to require new term is passed to allow for semi-naive evaluation
-    pub(crate) fn to_executable(
-        &self,
-        colt_id_to_require_new_terms: ColtId,
-    ) -> ExecutableFlatRule<'_> {
-        ExecutableFlatRule {
-            query_plan: self.query_plan.to_executable(colt_id_to_require_new_terms),
-            payloads: &self.payloads,
-        }
+        })
     }
 }

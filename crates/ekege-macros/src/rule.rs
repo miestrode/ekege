@@ -63,7 +63,7 @@ impl ToTokens for TreeQuery {
         let term_patterns = &self.term_patterns;
 
         tokens.extend(quote! {
-            ekege::rule::TreeQuery::new([#(#term_patterns),*])
+            #CRATE_ROOT::rule::TreeQuery::new([#(#term_patterns),*])
         })
     }
 }

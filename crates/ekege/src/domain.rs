@@ -11,7 +11,6 @@ use bumpalo::Bump;
 
 use crate::{
     database::Database,
-    plan::ColtId,
     rule::{FlatRule, TreeRule},
 };
 
@@ -31,12 +30,14 @@ impl Domain {
         Self {
             rules: rules
                 .into_iter()
-                .map(|tree_rule| {
-                    let flat_rule = FlatRule::from(tree_rule);
+                .flat_map(|tree_rule| {
+                    let mut flat_rules = tree_rule.to_flat_rules().peekable();
 
-                    flat_rule.assert_ids_are_local(database.id());
+                    flat_rules
+                        .peek()
+                        .inspect(|flat_rule| flat_rule.assert_ids_are_local(database.id()));
 
-                    flat_rule
+                    flat_rules
                 })
                 .collect(),
             database,
@@ -51,15 +52,7 @@ impl Domain {
         let bump = Bump::new();
 
         for _ in 0..times {
-            self.database.run_rules_once(
-                &bump,
-                self.rules.iter().flat_map(|rule| {
-                    // Semi-naive evaluation
-                    (0..rule.query_plan.colt_ids)
-                        .map(ColtId::new)
-                        .map(|colt_id| rule.to_executable(colt_id))
-                }),
-            );
+            self.database.run_rules_once(&bump, self.rules.iter());
             self.database.rebuild();
         }
     }

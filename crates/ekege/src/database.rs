@@ -47,18 +47,17 @@
 //! // This assertion is still correct, as the term IDs stored in the variables are unchanged
 //! assert_ne!(gray, dark_white);
 //! ```
-use std::{cell::UnsafeCell, collections::BTreeMap, ptr};
+use std::{cell::UnsafeCell, collections::BTreeMap, ptr, rc::Rc};
 
 use bumpalo::{collections::CollectIn, Bump};
 use either::Either;
 use ekege_macros::map_signature;
 
 use crate::{
-    colt::Colt,
     id::{AtomicGroupIdGenerator, GroupId, GroupMemberId, GroupMemberIdGenerator, MemberId},
     map::{FxIndexMap, Map, MapId, MapSignature, MapTerms, SeparatedMapTerm, TypeId},
-    plan::{ColtId, ExecutableQueryPlan},
-    rule::{ExecutableFlatRule, FlatRulePayload, QueryVariable},
+    plan::DhjExpression,
+    rule::{FlatRule, FlatRulePayload, QueryVariable},
     term::{TermId, TermTable, TermTuple, TreeTerm, TreeTermInput, UnifyResult},
 };
 
@@ -429,171 +428,12 @@ impl Database {
         )
     }
 
-    fn resolution_attempt<'a>(
-        bump: &'a Bump,
-        section_colts: &mut [BTreeMap<ColtId, &Colt<'a>>],
-        section_colt_ids: &[Vec<ColtId>],
-        subtuples: &mut [TermTuple<'a>],
-        current_substitution: &mut BTreeMap<QueryVariable, TermId>,
-        callback: &mut impl FnMut(&BTreeMap<QueryVariable, TermId>),
-    ) {
-        let (head_section, other_sections) = section_colts.split_at_mut(1);
-
-        let is_final_section = other_sections.is_empty();
-
-        let current_colts = &head_section[0];
-        let mut next_colts = other_sections.get_mut(0);
-
-        let current_colt_ids = &section_colt_ids[0];
-
-        let current_subtuple = &mut subtuples[0];
-
-        // Ignore the cover colt in case this is the final section. In that case,
-        // `.iter()` on the COLT will not force it, and using `.get(..)` on it
-        // while iterating will be UB. This is fine, since we don't need any
-        // subcolts after the final section
-        for colt_id in &current_colt_ids[if is_final_section { 1 } else { 0 }..] {
-            current_subtuple.term_ids.clear();
-
-            let colt = current_colts[colt_id];
-
-            current_subtuple.term_ids.extend(
-                colt.sub_schematics[0]
-                    .indices()
-                    .map(|(variable, _)| current_substitution[&variable]),
-            );
-
-            // SAFETY: When this is the final section of the plan, we ignore the first COLT
-            // explicitly, as `new_colts` won't be used. Otherwise, this isn't the last
-            // section, and thus forcing must've already happened in `iter()`,
-            // and this internal `force()` is a no-op
-            if let Some(subcolt) = unsafe { colt.get(current_subtuple) } {
-                if !is_final_section {
-                    next_colts.as_mut().unwrap().insert(*colt_id, subcolt);
-                }
-            } else {
-                return;
-            }
-        }
-
-        Self::search_inner(
-            bump,
-            &mut section_colts[1..],
-            &section_colt_ids[1..],
-            &mut subtuples[1..],
-            current_substitution,
-            callback,
-        );
-    }
-
-    fn search_inner<'a>(
-        bump: &'a Bump,
-        section_colts: &mut [BTreeMap<ColtId, &Colt<'a>>],
-        section_colt_ids: &[Vec<ColtId>],
-        subtuples: &mut [TermTuple<'a>],
-        current_substitution: &mut BTreeMap<QueryVariable, TermId>,
-        callback: &mut impl FnMut(&BTreeMap<QueryVariable, TermId>),
-    ) {
-        let is_after_final_section = section_colts.is_empty();
-
-        if is_after_final_section {
-            callback(current_substitution);
-        } else {
-            let current_colts = &section_colts[0];
-            let current_colt_ids = &section_colt_ids[0];
-
-            let cover_colt_id = &current_colt_ids[0];
-            let cover = current_colts[cover_colt_id];
-
-            // SAFETY: As shown below, `cover` won't be changed while it is being iterated,
-            // making `get` and `iter` safe
-            let iter = unsafe { cover.iter() };
-
-            match iter {
-                Either::Left(separated_map_terms) => {
-                    for separated_map_term in separated_map_terms {
-                        current_substitution.extend(
-                            cover.sub_schematics[0]
-                                .indices()
-                                .map(|(variable, index)| (variable, separated_map_term.get(index))),
-                        );
-
-                        Self::resolution_attempt(
-                            bump,
-                            section_colts,
-                            section_colt_ids,
-                            subtuples,
-                            current_substitution,
-                            callback,
-                        );
-                    }
-                }
-                Either::Right(tuples) => {
-                    for tuple in tuples {
-                        current_substitution.extend(
-                            cover.sub_schematics[0]
-                                .indices()
-                                .map(|(variable, _)| variable)
-                                .zip(tuple.term_ids.iter().copied()),
-                        );
-
-                        Self::resolution_attempt(
-                            bump,
-                            section_colts,
-                            section_colt_ids,
-                            subtuples,
-                            current_substitution,
-                            callback,
-                        );
-                    }
-                }
-            }
-        }
-    }
-
     fn search(
         bump: &Bump,
         maps: &[Map],
-        executable_query_plan: &ExecutableQueryPlan,
+        query: &Option<Rc<DhjExpression>>,
         callback: &mut impl FnMut(&BTreeMap<QueryVariable, TermId>),
     ) {
-        let colts = executable_query_plan
-            .colt_schematics
-            .iter()
-            .map(|(&colt_id, schematic)| {
-                (
-                    colt_id,
-                    Colt::new(
-                        &maps[schematic.map_id.member_id().inner()],
-                        bump,
-                        &schematic.sub_schematics,
-                        schematic.new_terms_required,
-                    ),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-
-        let mut subtuples = vec![
-            TermTuple {
-                term_ids: bumpalo::collections::Vec::new_in(bump)
-            };
-            executable_query_plan.section_colt_ids.len()
-        ];
-
-        Self::search_inner(
-            bump,
-            &mut vec![
-                colts
-                    .iter()
-                    .map(|(colt_id, colt)| (*colt_id, colt))
-                    .collect();
-                executable_query_plan.section_colt_ids.len()
-            ],
-            &executable_query_plan.section_colt_ids,
-            &mut subtuples,
-            &mut BTreeMap::new(),
-            callback,
-        );
     }
 
     fn start_pre_run_map_terms(&mut self) {
@@ -611,17 +451,16 @@ impl Database {
     pub(crate) fn run_rules_once<'a>(
         &mut self,
         bump: &Bump,
-        rules: impl IntoIterator<Item = ExecutableFlatRule<'a>>,
+        rules: impl IntoIterator<Item = &'a FlatRule>,
     ) {
         self.end_pre_run_map_terms();
 
         let mut created_terms = Vec::new();
 
-        for mut rule in rules {
-            rule.query_plan.canonicalize(&mut self.term_type_table);
-
-            Self::search(bump, &self.maps, &rule.query_plan, &mut |substitution| {
-                for payload in rule.payloads {
+        for rule in rules {
+            // TODO: Canonicalize rule query
+            Self::search(bump, &self.maps, &rule.query, &mut |substitution| {
+                for payload in &rule.payloads {
                     match payload {
                         FlatRulePayload::Creation(term) => {
                             let inputs = term.substitute(

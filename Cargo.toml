@@ -8,7 +8,7 @@ ekege = { path = "./crates/ekege/" }
 ekege-macros = { path = "./crates/ekege-macros" }
 
 # Regular dependencies
-indexmap = "2.5.0"
+indexmap = "2.6.0"
 either = "1.13.0"
 rustc-hash = "2.0.0"
 bumpalo = { version = "3.16.0", features = ["collections", "allocator-api2"] }
@@ -16,9 +16,9 @@ hashbrown = "0.15.0"
 bitfield-struct = "0.9.0"
 
 # Macro-related dependencies
-proc-macro2 = "1.0.86"
+proc-macro2 = "1.0.87"
 quote = "1.0.37"
-syn = "2.0.77"
+syn = "2.0.79"
 proc-macro-crate = "3.2.0"
 
 # Development dependenecies

@@ -6,7 +6,7 @@ use equivalence::Equivalence;
 use map::MapSignature;
 use proc_macro2::Span;
 use proc_macro_crate::{crate_name, FoundCrate};
-use quote::{ToTokens, TokenStreamExt};
+use quote::{quote, ToTokens, TokenStreamExt};
 use rewrite::Rewrite;
 use rule::TreeRule;
 use syn::{parse_macro_input, Ident};
@@ -25,7 +25,9 @@ pub(crate) struct CrateRoot {
 
 impl ToTokens for CrateRoot {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        tokens.append(Ident::new(&self.root, Span::call_site()));
+        let crate_root = Ident::new(&self.root, Span::call_site());
+
+        tokens.append_all(quote! { ::#crate_root });
     }
 }
 
