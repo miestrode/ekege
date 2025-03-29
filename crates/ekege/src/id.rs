@@ -6,10 +6,9 @@
 use std::{
     fmt::{Debug, Display},
     iter,
+    num::NonZero,
     ops::RangeFrom,
-    sync::atomic::{
-        AtomicU8, {self},
-    },
+    sync::atomic::{self, AtomicU8},
 };
 
 use bitfield_struct::bitfield;
@@ -28,7 +27,7 @@ impl ItemId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct GroupId(u8);
+pub(crate) struct GroupId(NonZero<u8>);
 
 impl Display for GroupId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -37,16 +36,19 @@ impl Display for GroupId {
 }
 
 impl GroupId {
-    fn new(id: u8) -> Self {
+    fn new(id: NonZero<u8>) -> Self {
         Self(id)
     }
 
     const fn from_bits(bits: u8) -> Self {
-        Self(bits)
+        Self(match NonZero::new(bits) {
+            Some(value) => value,
+            None => panic!("bits must be nonzero"),
+        })
     }
 
     const fn into_bits(self) -> u8 {
-        self.0
+        self.0.get()
     }
 }
 
@@ -103,6 +105,8 @@ struct GroupMemberIdInner {
 pub struct GroupMemberId(GroupMemberIdInner);
 
 impl GroupMemberId {
+    pub(crate) const EMPTY: Self = GroupMemberId(GroupMemberIdInner::new());
+
     pub(crate) fn new(group_id: GroupId, member_id: MemberId) -> Self {
         Self(
             GroupMemberIdInner::new()
@@ -117,6 +121,10 @@ impl GroupMemberId {
 
     pub(crate) fn member_id(&self) -> MemberId {
         self.0.member_id()
+    }
+
+    pub(crate) fn inner(&self) -> u32 {
+        self.0.into_bits()
     }
 }
 
@@ -157,11 +165,11 @@ impl Default for AtomicGroupIdGenerator {
 impl AtomicGroupIdGenerator {
     pub(crate) const fn new() -> Self {
         Self {
-            current_id: AtomicU8::new(0),
+            current_id: AtomicU8::new(1),
         }
     }
 
     pub(crate) fn generate_id(&self) -> GroupId {
-        GroupId::new(self.current_id.fetch_add(1, atomic::Ordering::Relaxed))
+        GroupId::new(NonZero::new(self.current_id.fetch_add(1, atomic::Ordering::Relaxed)).unwrap())
     }
 }

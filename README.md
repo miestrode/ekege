@@ -49,7 +49,7 @@ graph.run_rules(10);
 
 // Assert that `path(a, d)` exists, and therefore there is a path between `a` to `d`.
 // Notice how this term is not in the initial database
-assert!(graph.database.term_id(&term! { path(a, d) }).is_some());
+assert!(graph.database().term_id(&term! { path(a, d) }).is_some());
 ```
 
 Ekege doesn't have any built-in data types, but yet we can still represent many data structures, by use of user-defined, uninterpreted data types. Ekege's term-centric nature does make this slightly different than Datalog, but this is by design: Ekege is strictly more general.

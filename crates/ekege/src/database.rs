@@ -47,17 +47,16 @@
 //! // This assertion is still correct, as the term IDs stored in the variables are unchanged
 //! assert_ne!(gray, dark_white);
 //! ```
-use std::{cell::UnsafeCell, collections::BTreeMap, ptr, rc::Rc};
+use std::{cell::UnsafeCell, collections::BTreeMap, ptr};
 
-use bumpalo::{collections::CollectIn, Bump};
-use either::Either;
+use bumpalo::{Bump, collections::CollectIn};
 use ekege_macros::map_signature;
 
 use crate::{
     id::{AtomicGroupIdGenerator, GroupId, GroupMemberId, GroupMemberIdGenerator, MemberId},
     map::{FxIndexMap, Map, MapId, MapSignature, MapTerms, SeparatedMapTerm, TypeId},
-    plan::DhjExpression,
-    rule::{FlatRule, FlatRulePayload, QueryVariable},
+    plan::QueryPlan,
+    rule::{ExecutableFlatRule, FlatRulePayload, QueryVariable},
     term::{TermId, TermTable, TermTuple, TreeTerm, TreeTermInput, UnifyResult},
 };
 
@@ -428,12 +427,13 @@ impl Database {
         )
     }
 
-    fn search(
-        bump: &Bump,
+    fn search<'a>(
+        bump: &'a Bump,
         maps: &[Map],
-        query: &Option<Rc<DhjExpression>>,
-        callback: &mut impl FnMut(&BTreeMap<QueryVariable, TermId>),
+        plan: &QueryPlan,
+        callback: &mut impl FnMut(BTreeMap<QueryVariable, TermId>),
     ) {
+        plan.produce(bump, maps, callback);
     }
 
     fn start_pre_run_map_terms(&mut self) {
@@ -450,8 +450,8 @@ impl Database {
 
     pub(crate) fn run_rules_once<'a>(
         &mut self,
-        bump: &Bump,
-        rules: impl IntoIterator<Item = &'a FlatRule>,
+        bump: &'a Bump,
+        rules: impl IntoIterator<Item = ExecutableFlatRule<'a>>,
     ) {
         self.end_pre_run_map_terms();
 
@@ -460,14 +460,14 @@ impl Database {
         for rule in rules {
             // TODO: Canonicalize rule query
             Self::search(bump, &self.maps, &rule.query, &mut |substitution| {
-                for payload in &rule.payloads {
+                for payload in rule.payloads {
                     match payload {
                         FlatRulePayload::Creation(term) => {
                             let inputs = term.substitute(
                                 // `Database`'s drop order ensures this reference is dropped
                                 // before the `DatabaseBump` is dropped
                                 unsafe { self.bump.get() },
-                                substitution,
+                                &substitution,
                                 &created_terms,
                             );
 
@@ -481,8 +481,8 @@ impl Database {
                             Self::unify_inner(
                                 &mut self.term_type_table,
                                 &mut self.pending_rewrites,
-                                argument_a.substitute(substitution, &created_terms),
-                                argument_b.substitute(substitution, &created_terms),
+                                argument_a.substitute(&substitution, &created_terms),
+                                argument_b.substitute(&substitution, &created_terms),
                             );
                         }
                     }
@@ -781,7 +781,7 @@ impl Database {
         }
     }
 
-    /// Checks if two term IDs are equivalent. If two terms have been unified,
+    /// Checks if two [term ID](TermId)s are equivalent. If two terms have been unified,
     /// manually, as a result of a rule, or automatically, due to another
     /// unification requiring this, they will immediately be considered
     /// equivalent.

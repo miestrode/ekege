@@ -1,16 +1,15 @@
-#![allow(missing_docs)]
 use std::num::NonZeroUsize;
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use divan::Bencher;
 use ekege::{database::Database, domain::Domain, map::map_signature, rule::rule, term::term};
-use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, rngs::StdRng, seq::SliceRandom};
 
 const GRAPH_SIZE: usize = 100;
 const MAXIMUM_CYCLES: usize = 10;
 const SEED: u64 = 42;
 const TIMES: usize = 3;
 
-fn generate_regular_random_graph(
+fn generate_random_graph_via_rules(
     size: NonZeroUsize,
     maximum_cycles: usize,
     rng: &mut impl Rng,
@@ -51,7 +50,7 @@ fn generate_regular_random_graph(
     Domain::new(database, &rules)
 }
 
-fn generate_unification_random_graph(
+fn generate_random_graph_via_unificiation(
     size: NonZeroUsize,
     maximum_cycles: usize,
     rng: &mut impl Rng,
@@ -81,47 +80,28 @@ fn generate_unification_random_graph(
     database
 }
 
-fn random_graph_benchmark(criterion: &mut Criterion) {
-    criterion.bench_function("random graph", |bencher| {
-        bencher.iter_batched_ref(
-            || {
-                generate_regular_random_graph(
-                    NonZeroUsize::new(GRAPH_SIZE).unwrap(),
-                    MAXIMUM_CYCLES,
-                    &mut StdRng::seed_from_u64(SEED),
-                )
-            },
-            |domain| {
-                domain.run_rules(TIMES);
-            },
-            BatchSize::SmallInput,
-        )
-    });
-
-    criterion.bench_function("random graph unification", |bencher| {
-        bencher.iter_batched_ref(
-            || {
-                generate_unification_random_graph(
-                    NonZeroUsize::new(GRAPH_SIZE).unwrap(),
-                    MAXIMUM_CYCLES,
-                    &mut StdRng::seed_from_u64(SEED),
-                )
-            },
-            |database| {
-                database.rebuild();
-            },
-            BatchSize::SmallInput,
-        )
-    });
+#[divan::bench]
+fn random_graph_via_rules(bencher: Bencher) {
+    bencher
+        .with_inputs(generate_random_graph_via_rules(
+            NonZeroUsize::new(GRAPH_SIZE).unwrap(),
+            MAXIMUM_CYCLES,
+            &mut StdRng::seed_from_u64(SEED),
+        ))
+        .bench(|domain| domain.run_rules(TIMES));
 }
 
-fn config() -> Criterion {
-    Criterion::default()
+#[divan::bench]
+fn random_graph_via_unificiation(bencher: Bencher) {
+    bencher
+        .with_inputs(generate_random_graph_via_unificiation(
+            NonZeroUsize::new(GRAPH_SIZE).unwrap(),
+            MAXIMUM_CYCLES,
+            &mut StdRng::seed_from_u64(SEED),
+        ))
+        .bench(|database| database.rebuild());
 }
 
-criterion_group! {
-    name = benches;
-    config = config();
-    targets = random_graph_benchmark
+fn main() {
+    divan::main();
 }
-criterion_main!(benches);

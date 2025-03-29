@@ -47,18 +47,18 @@ pub type TermId = GroupMemberId;
 /// ID](TermId)s and other nested tree terms.
 ///
 /// See [`TreeTerm`] for more information.
-#[doc = discouraged!(ekege::term::term)]
+#[doc = discouraged!(term, ekege::term::term)]
 #[derive(Clone)]
 pub enum TreeTermInput {
     /// A [tree term](TreeTerm) to be used in another tree term.
     ///
     /// See [`TreeTerm`] for more information.
-    #[doc = discouraged!(ekege::term::term)]
+    #[doc = discouraged!(term, ekege::term::term)]
     TreeTerm(TreeTerm),
     /// A [term ID](TermId) to be used in another tree term.
     ///
     /// See [`TreeTerm`] for more information.
-    #[doc = discouraged!(ekege::term::term)]
+    #[doc = discouraged!(term, ekege::term::term)]
     TermId(TermId),
 }
 
@@ -66,7 +66,7 @@ pub enum TreeTermInput {
 /// other nested terms.
 ///
 /// See [`database`](ekege::database) for more information.
-#[doc = discouraged!(ekege::term::term)]
+#[doc = discouraged!(term, ekege::term::term)]
 ///
 /// # Examples
 ///
@@ -137,7 +137,7 @@ pub struct TreeTerm {
 impl TreeTerm {
     /// Creates a new [tree term](TreeTerm), existing in a map identified by a
     /// [map ID](MapId), and taking a collection of [inputs](TreeTermInput).
-    #[doc = discouraged!(ekege::term::term)]
+    #[doc = discouraged!(term, ekege::term::term)]
     pub fn new(map_id: MapId, inputs: impl IntoIterator<Item = TreeTermInput>) -> Self {
         Self {
             map_id,

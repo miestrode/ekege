@@ -1,6 +1,5 @@
 //! Items related to the rules used in a [domain](ekege::domain::Domain).
-use std::collections::BTreeMap;
-use std::rc::Rc;
+use std::{collections::BTreeMap, rc::Rc};
 
 use bumpalo::{collections::CollectIn, Bump};
 use ekege::discouraged;
@@ -161,11 +160,11 @@ pub use ekege_macros::rewrite;
 /// ```
 pub use ekege_macros::rule;
 
-use crate::plan::DhjExpression;
 use crate::{
     database::{Database, DatabaseId},
     id::ItemId,
     map::MapId,
+    plan::{DhjExpression, DhjGraph},
     term::{TermId, TermTuple},
 };
 
@@ -220,7 +219,7 @@ impl FlatMapTermPatternInput {
 pub(crate) struct FlatMapTermPattern {
     pub(crate) map_id: MapId,
     pub(crate) inputs: Vec<FlatMapTermPatternInput>,
-    new_terms_required: bool,
+    pub(crate) new_terms_required: bool,
 }
 
 impl FlatMapTermPattern {
@@ -231,6 +230,17 @@ impl FlatMapTermPattern {
             input.assert_ids_are_local(database_id);
         }
     }
+
+    pub(crate) fn variable_indices(&self) -> BTreeMap<QueryVariable, usize> {
+        self.inputs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, input)| match input {
+                FlatMapTermPatternInput::QueryVariable(variable) => Some((*variable, index)),
+                FlatMapTermPatternInput::TermId(_) => None,
+            })
+            .collect()
+    }
 }
 
 pub(crate) struct FlatQuery {
@@ -240,6 +250,7 @@ pub(crate) struct FlatQuery {
 impl FlatQuery {
     fn into_dhj_expression(self) -> Option<Rc<DhjExpression>> {
         let mut map_term_patterns = self.map_term_patterns.into_iter();
+
         let mut expression = Rc::new(DhjExpression::FlatMapTermPattern(Rc::new(
             map_term_patterns.next()?,
         )));
@@ -343,6 +354,11 @@ pub(crate) struct FlatRule {
     pub(crate) payloads: Vec<FlatRulePayload>,
 }
 
+pub(crate) struct ExecutableFlatRule<'a> {
+    pub(crate) query: DhjGraph<'a>,
+    pub(crate) payloads: &'a [FlatRulePayload],
+}
+
 impl FlatRule {
     pub(crate) fn assert_ids_are_local(&self, database_id: DatabaseId) {
         if let Some(expression) = &self.query {
@@ -351,6 +367,13 @@ impl FlatRule {
 
         for payload in &self.payloads {
             payload.assert_ids_are_local(database_id);
+        }
+    }
+
+    pub(crate) fn to_executable(&self) -> ExecutableFlatRule<'_> {
+        ExecutableFlatRule {
+            query: DhjExpression::to_dhj_graph(&self.query),
+            payloads: &self.payloads,
         }
     }
 }
@@ -367,13 +390,13 @@ enum TreeTermPatternInputInner {
 /// either query variables, [term ID](TermId)s, or other tree term patterns.
 ///
 /// See [tree term pattern](TreeTermPattern) for more information.
-#[doc = discouraged!(ekege::rule::rule)]
+#[doc = discouraged!(rule, ekege::rule::rule)]
 pub struct TreeTermPatternInput(TreeTermPatternInputInner);
 
 impl TreeTermPatternInput {
     /// Creates a new [tree term pattern input](TreeTermPatternInput) that is a
     /// query variable.
-    #[doc = discouraged!(ekege::rule::rule)]
+    #[doc = discouraged!(rule, ekege::rule::rule)]
     pub fn new_query_variable(variable: impl ToString) -> Self {
         Self(TreeTermPatternInputInner::QueryVariable(
             variable.to_string(),
@@ -382,14 +405,14 @@ impl TreeTermPatternInput {
 
     /// Creates a new [tree term pattern input](TreeTermPatternInput) that is a
     /// [term ID](TermId).
-    #[doc = discouraged!(ekege::rule::rule)]
+    #[doc = discouraged!(rule, ekege::rule::rule)]
     pub fn new_term_id(term_id: TermId) -> Self {
         Self(TreeTermPatternInputInner::TermId(term_id))
     }
 
     /// Creates a new [tree term pattern input](TreeTermPatternInput) that is a
     /// [tree term pattern](TreeTermPattern).
-    #[doc = discouraged!(ekege::rule::rule)]
+    #[doc = discouraged!(rule, ekege::rule::rule)]
     pub fn new_tree_term_pattern(pattern: TreeTermPattern) -> Self {
         Self(TreeTermPatternInputInner::TreeTermPattern(pattern))
     }
@@ -427,7 +450,7 @@ impl TreeTermPatternInput {
 /// fashion.
 ///
 /// See [`rule!`] for more information.
-#[doc = discouraged!(ekege::rule::rule)]
+#[doc = discouraged!(rule, ekege::rule::rule)]
 pub struct TreeTermPattern {
     map_id: MapId,
     inputs: Vec<TreeTermPatternInput>,
@@ -438,7 +461,7 @@ impl TreeTermPattern {
     /// ID](MapId), taking a set of [inputs](TreeTermPatternInput).
     ///
     /// See [`rule!`] for more information.
-    #[doc = discouraged!(ekege::rule::rule)]
+    #[doc = discouraged!(rule, ekege::rule::rule)]
     pub fn new(map_id: MapId, inputs: impl IntoIterator<Item = TreeTermPatternInput>) -> Self {
         Self {
             map_id,
@@ -497,7 +520,7 @@ impl TreeTermPattern {
 /// [tree term pattern](TreeTermPattern)s.
 ///
 /// See [`rule!`] for more information.
-#[doc = discouraged!(ekege::rule::rule)]
+#[doc = discouraged!(rule, ekege::rule::rule)]
 pub struct TreeQuery {
     term_patterns: Vec<TreeTermPattern>,
 }
@@ -505,7 +528,7 @@ pub struct TreeQuery {
 impl TreeQuery {
     /// Creates a new [tree query](TreeQuery) from a collection of [tree term
     /// pattern](TreeTermPattern)s.
-    #[doc = discouraged!(ekege::rule::rule)]
+    #[doc = discouraged!(rule, ekege::rule::rule)]
     pub fn new(query_term_patterns: impl IntoIterator<Item = TreeTermPattern>) -> Self {
         Self {
             term_patterns: query_term_patterns.into_iter().collect(),
@@ -522,7 +545,7 @@ enum TreeRulePayloadInner {
 /// [tree term pattern](TreeTermPattern)s.
 ///
 /// See [`rule!`] for more information.
-#[doc = discouraged!(ekege::rule::rule)]
+#[doc = discouraged!(rule, ekege::rule::rule)]
 pub struct TreeRulePayload(TreeRulePayloadInner);
 
 impl TreeRulePayload {
@@ -530,7 +553,7 @@ impl TreeRulePayload {
     /// terms using the passed [tree term pattern](TreeTermPattern).
     ///
     /// See [`rule!`] for more information.
-    #[doc = discouraged!(ekege::rule::rule)]
+    #[doc = discouraged!(rule, ekege::rule::rule)]
     pub fn new_term_creation(tree_term_pattern: TreeTermPattern) -> Self {
         Self(TreeRulePayloadInner::TermCreation(tree_term_pattern))
     }
@@ -539,7 +562,7 @@ impl TreeRulePayload {
     /// terms using the passed [tree term pattern input](TreeTermPatternInput)s.
     ///
     /// See [`rule!`] for more information.
-    #[doc = discouraged!(ekege::rule::rule)]
+    #[doc = discouraged!(rule, ekege::rule::rule)]
     pub fn new_union(
         tree_term_pattern_input_a: TreeTermPatternInput,
         tree_term_pattern_input_b: TreeTermPatternInput,
@@ -625,7 +648,7 @@ impl TreeRulePayload {
 /// [tree term pattern](TreeTermPattern)s.
 ///
 /// See [`rule!`] for more information.
-#[doc = discouraged!(ekege::rule::rule)]
+#[doc = discouraged!(rule, ekege::rule::rule)]
 pub struct TreeRule {
     query: TreeQuery,
     payloads: Vec<TreeRulePayload>,
@@ -636,7 +659,7 @@ impl TreeRule {
     /// collection of [tree rule payload](TreeRulePayload)s.
     ///
     /// See [`rule!`] for more information.
-    #[doc = discouraged!(ekege::rule::rule)]
+    #[doc = discouraged!(rule, ekege::rule::rule)]
     pub fn new(query: TreeQuery, payloads: impl IntoIterator<Item = TreeRulePayload>) -> Self {
         Self {
             query,

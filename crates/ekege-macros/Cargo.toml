@@ -1,6 +1,13 @@
 [package]
 name = "ekege-macros"
-edition = "2021"
+version = "0.1.0"
+description = "Procedural macros for Ekege: An E-graph library that's built like a database"
+authors = ["Yoav Grimland <miestrode@proton.me>"]
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
 
 [lints]
 workspace = true

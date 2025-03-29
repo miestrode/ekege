@@ -1,9 +1,15 @@
 [package]
 name = "ekege"
 version = "0.1.0"
-edition = "2021"
 description = "An E-graph library that's built like a database"
+keywords = ["e-graphs", "eqsat", "egglog", "datalog", "equality"]
+categories = ["database-implementations", "data-structures"]
 authors = ["Yoav Grimland <miestrode@proton.me>"]
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
 
 [lints]
 workspace = true
@@ -19,10 +25,16 @@ rustc-hash.workspace = true
 bumpalo.workspace = true
 hashbrown.workspace = true
 bitfield-struct.workspace = true
+rustifact.workspace = true
 
 [dev-dependencies]
-criterion.workspace = true
+divan.workspace = true
 rand.workspace = true
+
+[build-dependencies]
+rustifact.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
 
 [[bench]]
 name = "graph"

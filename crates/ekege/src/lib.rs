@@ -129,20 +129,39 @@
 //! ```
 extern crate self as ekege;
 
-pub(crate) use ekege_macros::discouraged;
+#[macro_export]
+macro_rules! discouraged {
+    ($item:ident, $path:path) => {
+        concat!(
+            "\
+            <div class=\"warning\">\n\
+                \n\
+                This item's use is discouraged. It is designed to be created indirectly, via the [`",
+                stringify!($item),
+                "!`](",
+                stringify!($path),
+                ") macro.\n\
+                Although there are times where it may be beneficial to use the underlying abstractions directly,\n\
+                most users will benefit from simply using macros, as this API is more low-level.\n\
+                \n\
+            </div>\
+            "
+        )
+    };
+}
+
+#[doc = discouraged!(rule, ekege::rule::rule)]
+fn x() {}
 
 pub mod database;
 pub mod domain;
 mod estimation;
 mod graph;
 pub mod id;
+mod join;
+mod lookup;
 pub mod map;
 mod optimizer;
 mod plan;
 pub mod rule;
 pub mod term;
-
-// TODO: Remove this once `precise_capturing` is stabilized
-pub(crate) trait Captures<U> {}
-
-impl<T: ?Sized, U> Captures<U> for T {}

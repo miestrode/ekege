@@ -2,28 +2,42 @@
 members = ["crates/*"]
 resolver = "2"
 
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/miestrode/ekege"
+readme = "README.md"
+rust-version = "1.85.0"
+
 [workspace.dependencies]
 # Workspace members
 ekege = { path = "./crates/ekege/" }
 ekege-macros = { path = "./crates/ekege-macros" }
 
 # Regular dependencies
-indexmap = "2.6.0"
-either = "1.13.0"
-rustc-hash = "2.0.0"
-bumpalo = { version = "3.16.0", features = ["collections", "allocator-api2"] }
-hashbrown = "0.15.0"
-bitfield-struct = "0.9.0"
+indexmap = "2.8.0"
+either = "1.15.0"
+rustc-hash = "2.1.1"
+bumpalo = { version = "3.17.0", features = ["collections", "allocator-api2"] }
+hashbrown = "0.15.2"
+bitfield-struct = "0.10.1"
+cranelift = { version = "0.118.0", features = ["module", "native"] }
+cranelift-jit = { version = "0.118.0", features = ["selinux-fix"] }
+crc32c = "0.6.8"
 
 # Macro-related dependencies
-proc-macro2 = "1.0.87"
-quote = "1.0.37"
-syn = "2.0.79"
-proc-macro-crate = "3.2.0"
+proc-macro2 = "1.0.94"
+quote = "1.0.40"
+syn = "2.0.100"
+proc-macro-crate = "3.3.0"
+
+# Build dependencies
+rustifact = "0.10.1"
+rand = "0.9.0"
+rand_chacha = "0.9.0"
 
 # Development dependenecies
-criterion = { version = "0.5.1", features = ["html_reports"] }
-rand = "0.8.5"
+divan = { version = "0.1.17" }
 
 [workspace.lints.rust]
 missing_docs = "warn"

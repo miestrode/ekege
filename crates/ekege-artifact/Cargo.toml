@@ -1,0 +1,8 @@
+[package]
+name = "ekege-artifact"
+rust-version.workspace = true
+edition.workspace = true
+
+[dependencies]
+quote.workspace = true
+proc-macro2.workspace = true

@@ -4,11 +4,78 @@ use std::{
     ops::{Deref, Range},
 };
 
+/// Creates a new [map signature](MapSignature), using [type ID](TypeId)s in the
+/// local scope. A map's signature is made of a list of input type IDs, and an
+/// output type ID.
+///
+/// Terms created in this map have the output type ID as their types, and their
+/// inputs type IDs must match the signature's input type IDs, in order.
+///
+/// # Examples
+///
+/// Defining map signatures for common boolean operations:
+///
+/// ```
+/// # use ekege::{rule::rule, database::Database, map::map_signature};
+/// #
+/// let mut database = Database::new();
+///
+/// let boolean = database.new_type();
+///
+/// let or = map_signature! { (boolean, boolean) -> boolean };
+/// let and = map_signature! { (boolean, boolean) -> boolean };
+/// let not = map_signature! { (boolean,) -> boolean }; // `map_signature! { (boolean) -> boolean }` also works
+/// ```
+///
+/// Defining map signatures for relations, which are maps with [unit](https://wikipedia.org/wiki/Unit_type) output type:
+///
+/// ```
+/// # use ekege::{rule::rule, database::Database, map::map_signature};
+/// #
+/// let mut database = Database::new();
+///
+/// // Types have no meaning beyond that which we give them, so the declaration
+/// // of the unit type is the same as that of any other type.
+/// let color = database.new_type();
+/// let unit = database.new_type();
+///
+/// let bright = map_signature! { (color,) -> unit };
+/// let complementary = map_signature! { (color, color) -> unit };
+/// let triadic = map_signature! { (color, color, color) -> unit };
+/// ```
+///
+/// Using a map signature to define a new map and interact with it:
+///
+/// ```
+/// # use ekege::{rule::rule, database::Database, map::map_signature, term::term};
+/// #
+/// let mut database = Database::new();
+///
+/// // Types have no meaning beyond that which we give them, so the declaration
+/// // of the unit type is the same as that of any other type.
+/// let color = database.new_type();
+/// let unit = database.new_type();
+///
+/// let bright_signature = map_signature! { (color,) -> unit };
+/// let bright_map = database.new_map(bright_signature);
+///
+/// // Define some opaque colors
+/// let dark_red = database.new_constant(color);
+/// let yellow = database.new_constant(color);
+/// let dark_purple = database.new_constant(color);
+///
+/// // Define `yellow` to be a bright color
+/// database.new_term(&term! { bright_map(yellow) });
+///
+/// // Check if `dark_red` is a bright color. This will be false
+/// let is_dark_red_bright = database.term_id(&term! { bright_map(dark_red) }).is_some();
+/// ```
 pub use ekege_macros::map_signature;
 use indexmap::{map::Entry, IndexMap};
 use rustc_hash::FxBuildHasher;
 
 use crate::{
+    discouraged,
     id::GroupMemberId,
     term::{TermId, TermTuple},
 };
@@ -20,8 +87,11 @@ pub type TypeId = GroupMemberId;
 /// An ID to identify a map in a [database](ekege::database::Database).
 pub type MapId = GroupMemberId;
 
-/// The signature of a map contains the [type ID](TypeId)s each member's terms
-/// must have, and the type ID each term in the map will have.
+/// The signature of a map contains the [type ID](TypeId)s each member's child
+/// terms must have, and the type ID each term in the map will have.
+///
+/// See [`map_signature!`] for more information.
+#[doc = discouraged!(map_signature, ekege::map::map_signature)]
 pub struct MapSignature {
     input_type_ids: Vec<TypeId>,
     output_type_id: TypeId,
@@ -29,9 +99,8 @@ pub struct MapSignature {
 
 impl MapSignature {
     /// Creates a new [signature](MapSignature) with the given input [type
-    /// ID](TypeId)s and the output type ID. It is recommended you use the
-    /// [`map_signature!`] macro for creating a new map signature, as using
-    /// it is more readable.
+    /// ID](TypeId)s and the output type ID.
+    #[doc = discouraged!(map_signature, ekege::map::map_signature)]
     pub fn new(input_type_ids: impl IntoIterator<Item = TypeId>, output_type_id: TypeId) -> Self {
         Self {
             input_type_ids: input_type_ids.into_iter().collect(),

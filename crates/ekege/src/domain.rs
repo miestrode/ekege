@@ -45,14 +45,13 @@ impl Domain {
     }
 
     /// Run the [rule](ekege::rule::rule!)s on the [database](Database) a
-    /// specified number of times. This will also
-    /// [rebuild](Database::rebuild) the database after each time all of the
-    /// rules were run at once
+    /// specified number of times. This will also [rebuild](Database::rebuild)
+    /// the database after each time all of the rules were run at once
     pub fn run_rules(&mut self, times: usize) {
         let bump = Bump::new();
-
         for _ in 0..times {
-            self.database.run_rules_once(&bump, self.rules.iter());
+            self.database
+                .run_rules_once(&bump, self.rules.iter().map(FlatRule::to_executable));
             self.database.rebuild();
         }
     }
