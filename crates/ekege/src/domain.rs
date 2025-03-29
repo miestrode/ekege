@@ -7,8 +7,6 @@
 //!
 //! Once a database is moved into the domain, it can still be used via the
 //! [`Domain::database`] field.
-use bumpalo::Bump;
-
 use crate::{
     database::Database,
     rule::{FlatRule, TreeRule},

@@ -1,7 +1,7 @@
 //! Items related to the maps used in a [database](ekege::database::Database).
 use std::{
-    cell::UnsafeCell,
-    ops::{Deref, Range},
+    hash::{BuildHasher, Hash, Hasher},
+    ops::Range,
 };
 
 /// Creates a new [map signature](MapSignature), using [type ID](TypeId)s in the
@@ -71,16 +71,14 @@ use std::{
 /// let is_dark_red_bright = database.term_id(&term! { bright_map(dark_red) }).is_some();
 /// ```
 pub use ekege_macros::map_signature;
-use indexmap::{map::Entry, IndexMap};
+use hashbrown::{HashTable, hash_table::Entry};
 use rustc_hash::FxBuildHasher;
 
 use crate::{
     discouraged,
     id::GroupMemberId,
-    term::{TermId, TermTuple},
+    term::{TermId, TermTable},
 };
-
-pub(crate) type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
 
 /// An ID to identify a type in a [database](ekege::database::Database).
 pub type TypeId = GroupMemberId;
@@ -117,62 +115,170 @@ impl MapSignature {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct SeparatedMapTerm<'a> {
-    pub(crate) member: &'a [TermId],
-    pub(crate) term_id: TermId,
+struct MapTermReference<'a> {
+    term_ids: &'a [TermId],
 }
 
-impl<'a> SeparatedMapTerm<'a> {
-    pub(crate) fn get(&self, index: usize) -> TermId {
-        if index == self.member.len() {
-            self.term_id
-        } else {
-            self.member[index]
-        }
+impl<'a> MapTermReference<'a> {
+    fn new(term_ids: &'a [TermId]) -> Self {
+        Self { term_ids }
+    }
+
+    fn inner(&self) -> &[TermId] {
+        self.term_ids
+    }
+
+    fn argument_count(&self) -> usize {
+        self.term_ids.len() - 1
+    }
+
+    pub(crate) fn member(&self) -> &[TermId] {
+        &self.term_ids[..self.argument_count()]
+    }
+
+    pub(crate) fn term_id(&self) -> TermId {
+        self.term_ids[self.argument_count()]
     }
 }
 
-pub(crate) struct MapTerms {
-    map_terms: UnsafeCell<FxIndexMap<TermTuple<'static>, TermId>>,
-    pub(crate) pre_run_new_map_terms_range: Range<usize>,
+pub(crate) struct Map {
+    index_map: HashTable<usize>,
+    term_ids: Vec<TermId>,
+    signature: MapSignature,
+    pre_run_new_map_terms_range: Range<usize>,
+    hash_builder: FxBuildHasher,
 }
 
-impl MapTerms {
-    pub(crate) fn new() -> Self {
+impl Map {
+    pub(crate) fn new(signature: MapSignature) -> Self {
         Self {
-            map_terms: UnsafeCell::new(FxIndexMap::default()),
+            index_map: HashTable::new(),
+            term_ids: Vec::new(),
+            signature,
             pre_run_new_map_terms_range: 0..0,
+            hash_builder: FxBuildHasher,
         }
+    }
+
+    pub(crate) fn signature(&self) -> &MapSignature {
+        &self.signature
     }
 
     pub(crate) fn len(&self) -> usize {
-        // SAFETY: No references to the map can be given by the API
-        unsafe { &*self.map_terms.get() }.len()
+        self.index_map.len()
     }
 
-    pub(crate) fn get_by_index(&self, index: usize) -> Option<SeparatedMapTerm<'_>> {
-        // SAFETY: The references yielded, are unrelated to the `IndexMap`, but to a
-        // stable location, kind of like in the `elsa` crate
-        unsafe { &*self.map_terms.get() }
-            .get_index(index)
-            .map(|(term_tuple, term_id)| SeparatedMapTerm {
-                member: term_tuple.term_ids.deref(),
-                term_id: *term_id,
-            })
+    fn get_map_term_inner<'a>(
+        signature: &MapSignature,
+        term_ids: &'a [TermId],
+        index: usize,
+    ) -> Option<MapTermReference<'a>> {
+        let map_term_ids = index + signature.input_type_ids().len() + 1;
+
+        term_ids
+            .get(index..index + map_term_ids)
+            .map(MapTermReference::new)
     }
 
-    pub(crate) fn get(&self, term_tuple: &TermTuple<'static>) -> Option<TermId> {
-        // SAFETY: No references are yielded
-        unsafe { &*self.map_terms.get() }.get(term_tuple).copied()
+    pub(crate) fn get_map_term(&self, index: usize) -> Option<MapTermReference> {
+        Self::get_map_term_inner(&self.signature, &self.term_ids, index)
     }
 
-    pub(crate) fn entry(
-        &self,
-        term_tuple: TermTuple<'static>,
-    ) -> Entry<'_, TermTuple<'static>, TermId> {
-        // SAFETY: Due to construction, no reference will be invalidated
-        unsafe { &mut *self.map_terms.get() }.entry(term_tuple)
+    fn hash_member_inner(
+        hash_builder: impl BuildHasher,
+        member: impl IntoIterator<Item = GroupMemberId>,
+    ) -> u64 {
+        let mut hasher = hash_builder.build_hasher();
+
+        for argument in member {
+            argument.hash(&mut hasher);
+        }
+
+        hasher.finish()
+    }
+
+    fn hash_member(&self, member: impl IntoIterator<Item = TermId>) -> u64 {
+        Self::hash_member_inner(self.hash_builder, member)
+    }
+
+    pub(crate) fn get_term_id(&self, member: &[TermId]) -> Option<TermId> {
+        self.index_map
+            .find(
+                self.hash_member(member.iter().copied()),
+                |&possible_index| {
+                    // TODO: Check if unchecked is better
+                    self.get_map_term(possible_index).unwrap().member() == member
+                },
+            )
+            .copied()
+            .map(|index| self.term_ids[index])
+    }
+
+    pub(crate) fn get_term_id_or_insert_with<I: Iterator<Item = TermId>>(
+        &mut self,
+        member: impl FnOnce(&mut Map, &mut TermTable<TypeId>) -> I,
+        term_type_table: &mut TermTable<TypeId>,
+        with_term_id: impl FnOnce(&mut TermTable<TypeId>) -> TermId,
+    ) -> TermId {
+        self.term_ids.extend(member(self, term_type_table));
+        let new_index = self.len();
+
+        let member = &self.term_ids[new_index..];
+
+        assert_eq!(
+            self.signature().input_type_ids().len(),
+            member.len(),
+            "invalid argument count for map"
+        );
+
+        assert!(
+            member
+                .iter()
+                .zip(self.signature().input_type_ids().iter())
+                .all(|(term_id, type_id)| term_type_table.get(*term_id) == type_id),
+            "mismatching types for map"
+        );
+
+        let member_hash = self.hash_member(member.iter().copied());
+
+        let index = match self.index_map.entry(
+            member_hash,
+            |&possible_index| {
+                // TODO: Check if unchecked is better
+                Self::get_map_term_inner(&self.signature, &self.term_ids, possible_index)
+                    .unwrap()
+                    .member()
+                    == member
+            },
+            |&index| {
+                Self::hash_member_inner(
+                    self.hash_builder,
+                    Self::get_map_term_inner(&self.signature, &self.term_ids, index)
+                        .unwrap()
+                        .member()
+                        .iter()
+                        .copied(),
+                )
+            },
+        ) {
+            Entry::Occupied(occupied_entry) => {
+                self.term_ids.truncate(new_index);
+
+                *occupied_entry.get()
+            }
+            Entry::Vacant(vacant_entry) => {
+                vacant_entry.insert(new_index);
+                self.term_ids.push(with_term_id(term_type_table));
+
+                new_index
+            }
+        };
+
+        self.get_map_term(index).unwrap().term_id()
+    }
+
+    pub(crate) fn swap_indices(&mut self, index_a: usize, index_b: usize) {
+        self.term_ids.swap(index_a, index_b);
     }
 
     pub(crate) fn start_pre_run_new_map_terms(&mut self) {
@@ -183,21 +289,11 @@ impl MapTerms {
         self.pre_run_new_map_terms_range.end = self.len();
     }
 
-    pub(crate) fn as_inner_mut(&mut self) -> &mut FxIndexMap<TermTuple<'static>, TermId> {
-        self.map_terms.get_mut()
+    pub(crate) fn pre_run_new_map_terms_range(&self) -> &Range<usize> {
+        &self.pre_run_new_map_terms_range
     }
-}
 
-pub(crate) struct Map {
-    pub(crate) map_terms: MapTerms,
-    pub(crate) signature: MapSignature,
-}
-
-impl Map {
-    pub(crate) fn new(signature: MapSignature) -> Self {
-        Self {
-            map_terms: MapTerms::new(),
-            signature,
-        }
+    pub(crate) fn pre_run_new_map_terms_range_mut(&mut self) -> &mut Range<usize> {
+        &mut self.pre_run_new_map_terms_range
     }
 }

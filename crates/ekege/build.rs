@@ -1,10 +1,9 @@
 #![allow(missing_docs)]
-
 use std::iter;
 
-use rand::{seq::SliceRandom, Rng, SeedableRng};
+use ekege_artifact::{Artifact, ToTokens, TokenStream, TokenStreamExt, format_ident, quote};
+use rand::{Rng, SeedableRng, seq::SliceRandom};
 use rand_chacha::ChaCha12Rng;
-use rustifact::ToTokenStream;
 
 const fn binomial_coefficient(mut n: u32, mut k: u32) -> u32 {
     let mut permutations = n;
@@ -35,8 +34,26 @@ fn get_rng() -> impl Rng {
     ChaCha12Rng::seed_from_u64(RNG_SEED)
 }
 
-fn write_bloom_filter_tags(rng: &mut impl Rng) {
-    let mut bloom_filter_tags = iter::successors(Some(FIRST_BLOOM_FILTER_TAG), |&tag| {
+struct BloomFilterTags(Vec<u16>);
+
+impl ToTokens for BloomFilterTags {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let tags = &self.0;
+
+        tokens.append_all(quote! { [#(#tags),*] });
+    }
+}
+
+impl Artifact for BloomFilterTags {
+    fn generate_type(&self) -> impl ToTokens {
+        let length = self.0.len();
+
+        quote! { [u16; #length] }
+    }
+}
+
+fn generate_bloom_filter_tags(rng: &mut impl Rng) -> BloomFilterTags {
+    let mut tags = iter::successors(Some(FIRST_BLOOM_FILTER_TAG), |&tag| {
         if tag == LAST_BLOOM_FILTER_TAG {
             return Some(FIRST_BLOOM_FILTER_TAG);
         }
@@ -64,9 +81,9 @@ fn write_bloom_filter_tags(rng: &mut impl Rng) {
     .take(BLOOM_FILTER_TAGS)
     .collect::<Vec<_>>();
 
-    bloom_filter_tags.shuffle(rng);
+    tags.shuffle(rng);
 
-    rustifact::write_const_array!(BLOOM_FILTER_TAGS, u16, &bloom_filter_tags);
+    BloomFilterTags(tags)
 }
 
 fn send_cargo_instructions() {
@@ -78,7 +95,10 @@ fn send_cargo_instructions() {
 fn main() {
     let mut rng = get_rng();
 
-    write_bloom_filter_tags(&mut rng);
+    ekege_artifact::store_artifact(
+        format_ident!("BLOOM_FILTER_TAG"),
+        generate_bloom_filter_tags(&mut rng),
+    );
 
     send_cargo_instructions();
 }

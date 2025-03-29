@@ -4,7 +4,7 @@
 //! The main type of this module is [`GroupMemberId`], a numeric ID data type
 //! representing an item that exists within another item.
 use std::{
-    fmt::{Debug, Display},
+    fmt::{self, Debug, Display},
     iter,
     num::NonZero,
     ops::RangeFrom,
@@ -27,28 +27,25 @@ impl ItemId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct GroupId(NonZero<u8>);
+pub(crate) struct GroupId(u8);
 
 impl Display for GroupId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Display::fmt(&self.0, f)
     }
 }
 
 impl GroupId {
     fn new(id: NonZero<u8>) -> Self {
-        Self(id)
+        Self(id.get())
     }
 
     const fn from_bits(bits: u8) -> Self {
-        Self(match NonZero::new(bits) {
-            Some(value) => value,
-            None => panic!("bits must be nonzero"),
-        })
+        Self(bits)
     }
 
     const fn into_bits(self) -> u8 {
-        self.0.get()
+        self.0
     }
 }
 
@@ -57,7 +54,7 @@ impl GroupId {
 pub(crate) struct MemberId(usize);
 
 impl Display for MemberId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Display::fmt(&self.0, f)
     }
 }
@@ -115,6 +112,10 @@ impl GroupMemberId {
         )
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        *self == Self::EMPTY
+    }
+
     pub(crate) fn group_id(&self) -> GroupId {
         self.0.group_id()
     }
@@ -129,7 +130,7 @@ impl GroupMemberId {
 }
 
 impl Debug for GroupMemberId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}/{}", self.group_id(), self.member_id())
     }
 }
@@ -165,11 +166,11 @@ impl Default for AtomicGroupIdGenerator {
 impl AtomicGroupIdGenerator {
     pub(crate) const fn new() -> Self {
         Self {
-            current_id: AtomicU8::new(1),
+            current_id: AtomicU8::new(0),
         }
     }
 
     pub(crate) fn generate_id(&self) -> GroupId {
-        GroupId::new(NonZero::new(self.current_id.fetch_add(1, atomic::Ordering::Relaxed)).unwrap())
+        GroupId::new(NonZero::new(self.current_id.fetch_add(1, atomic::Ordering::AcqRel)).unwrap())
     }
 }

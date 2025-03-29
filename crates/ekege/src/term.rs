@@ -245,11 +245,29 @@ impl<T> TermTable<T> {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub(crate) struct TermTuple<'a> {
-    pub(crate) term_ids: bumpalo::collections::Vec<'a, TermId>,
+pub(crate) struct TermIdTuple {
+    term_ids: Vec<TermId>,
 }
 
-impl<'a> TermTuple<'a> {
+impl TermIdTuple {
+    pub(crate) fn new(term_ids: impl IntoIterator<Item = TermId>) -> Self {
+        Self {
+            term_ids: term_ids.into_iter().collect(),
+        }
+    }
+
+    pub(crate) fn inner(&self) -> &[GroupMemberId] {
+        &self.term_ids
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.inner().len()
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = TermId> {
+        self.inner().iter().copied()
+    }
+
     pub(crate) fn substitute(&mut self, substitution: &BTreeMap<TermId, TermId>) {
         for term_id in &mut self.term_ids {
             if let Some(new_term_id) = substitution.get(term_id) {

@@ -47,17 +47,14 @@
 //! // This assertion is still correct, as the term IDs stored in the variables are unchanged
 //! assert_ne!(gray, dark_white);
 //! ```
-use std::{cell::UnsafeCell, collections::BTreeMap, ptr};
-
-use bumpalo::{Bump, collections::CollectIn};
-use ekege_macros::map_signature;
+use std::collections::BTreeMap;
 
 use crate::{
     id::{AtomicGroupIdGenerator, GroupId, GroupMemberId, GroupMemberIdGenerator, MemberId},
-    map::{FxIndexMap, Map, MapId, MapSignature, MapTerms, SeparatedMapTerm, TypeId},
+    map::{Map, MapId, MapSignature, TypeId, map_signature},
     plan::QueryPlan,
     rule::{ExecutableFlatRule, FlatRulePayload, QueryVariable},
-    term::{TermId, TermTable, TermTuple, TreeTerm, TreeTermInput, UnifyResult},
+    term::{TermId, TermIdTuple, TermTable, TreeTerm, TreeTermInput, UnifyResult},
 };
 
 pub(crate) type DatabaseId = GroupId;
@@ -69,30 +66,6 @@ struct PendingRewrite {
     new_term_id: TermId,
 }
 
-struct DatabaseBump(&'static UnsafeCell<Bump>);
-
-impl DatabaseBump {
-    fn new() -> Self {
-        Self(Box::leak(Box::new(UnsafeCell::new(Bump::new()))))
-    }
-
-    // SAFETY: Caller must ensure `DatabaseBump` is not dropped before all uses of
-    // the `Bump` are dropped.
-    unsafe fn get(&self) -> &'static Bump {
-        unsafe { &*self.0.get() }
-    }
-}
-
-impl Drop for DatabaseBump {
-    fn drop(&mut self) {
-        // SAFETY: By this point, no reference to the internal `Bump` should exist, as
-        // per `DatabaseBump::get`
-        unsafe {
-            drop(Box::from_raw(ptr::from_ref(self.0) as *mut UnsafeCell<Bump>));
-        }
-    }
-}
-
 /// An E-database storing uninterpreted terms with equivalence.
 ///
 /// See [`database`](ekege::database) for more information on the database.
@@ -102,7 +75,6 @@ pub struct Database {
     term_type_table: TermTable<TypeId>,
     type_id_generator: GroupMemberIdGenerator,
     pending_rewrites: Vec<PendingRewrite>,
-    bump: DatabaseBump,
 }
 
 impl Database {
@@ -120,7 +92,6 @@ impl Database {
             term_type_table: TermTable::new(id),
             type_id_generator: GroupMemberIdGenerator::new(id),
             pending_rewrites: Vec::new(),
-            bump: DatabaseBump::new(),
             id,
         }
     }
@@ -237,14 +208,16 @@ impl Database {
         *self.term_type_table.get(term_id)
     }
 
-    fn insert_map_member(
-        map: &Map,
+    fn insert_map_member<I: Iterator<Item = TermId>>(
+        map: &mut Map,
+        member: impl FnOnce(&mut Map, &mut TermTable<TypeId>) -> I,
         term_type_table: &mut TermTable<TypeId>,
-        term_tuple: TermTuple<'static>,
     ) -> TermId {
-        *map.map_terms
-            .entry(term_tuple)
-            .or_insert_with(|| term_type_table.insert_term(map.signature.output_type_id()))
+        let output_type_id = map.signature().output_type_id();
+
+        map.get_term_id_or_insert_with(member, term_type_table, |term_type_table| {
+            term_type_table.insert_term(output_type_id)
+        })
     }
 
     fn map_inner(database_id: DatabaseId, maps: &[Map], map_id: MapId) -> &Map {
@@ -257,46 +230,36 @@ impl Database {
         Self::map_inner(self.id(), &self.maps, map_id)
     }
 
+    fn map_mut_inner(database_id: DatabaseId, maps: &mut [Map], map_id: MapId) -> &mut Map {
+        Self::assert_id_is_local_inner(database_id, map_id, "map id");
+
+        &mut maps[map_id.member_id().inner()]
+    }
+
+    pub(crate) fn map_mut(&mut self, map_id: MapId) -> &mut Map {
+        Self::map_mut_inner(self.id(), &mut self.maps, map_id)
+    }
+
     fn new_term_inner(
         database_id: DatabaseId,
-        maps: &[Map],
+        maps: &mut [Map],
         term_type_table: &mut TermTable<TypeId>,
-        bump: &'static Bump,
         term: &TreeTerm,
     ) -> TermId {
-        let map = Self::map_inner(database_id, maps, term.map_id);
+        let member = term.inputs.iter().map(|input| match input {
+            TreeTermInput::TreeTerm(term) => {
+                Self::new_term_inner(database_id, maps, term_type_table, term)
+            }
+            TreeTermInput::TermId(term_id) => {
+                Self::canonicalize_inner(database_id, term_type_table, *term_id)
+            }
+        });
 
-        let term_tuple = TermTuple {
-            term_ids: term
-                .inputs
-                .iter()
-                .map(|input| match input {
-                    TreeTermInput::TreeTerm(term) => {
-                        Self::new_term_inner(database_id, maps, term_type_table, bump, term)
-                    }
-                    TreeTermInput::TermId(term_id) => {
-                        Self::canonicalize_inner(database_id, term_type_table, *term_id)
-                    }
-                })
-                .collect_in(bump),
-        };
-
-        assert_eq!(
-            map.signature.input_type_ids().len(),
-            term_tuple.term_ids.len(),
-            "invalid argument count for map"
-        );
-
-        assert!(
-            term_tuple
-                .term_ids
-                .iter()
-                .zip(map.signature.input_type_ids().iter())
-                .all(|(argument, type_id)| *term_type_table.get(*argument) == *type_id),
-            "mismatching types for map"
-        );
-
-        Self::insert_map_member(map, term_type_table, term_tuple)
+        Self::insert_map_member(
+            Self::map_mut_inner(database_id, maps, term.map_id),
+            term_type_table,
+            member,
+        )
     }
 
     /// Adds a new term to this database and returns its [term ID](TermId). The
@@ -329,15 +292,7 @@ impl Database {
     /// );
     /// ```
     pub fn new_term(&mut self, term: &TreeTerm) -> TermId {
-        Self::new_term_inner(
-            self.id,
-            &self.maps,
-            &mut self.term_type_table,
-            // `Database`'s drop order ensures this reference is dropped
-            // before the `DatabaseBump` is dropped
-            unsafe { self.bump.get() },
-            term,
-        )
+        Self::new_term_inner(self.id, &mut self.maps, &mut self.term_type_table, term)
     }
 
     /// Returns the [term ID](TermId) of an existing [term](TreeTerm), if it
@@ -368,9 +323,8 @@ impl Database {
     pub fn term_id(&self, term: &TreeTerm) -> Option<TermId> {
         let map = self.map(term.map_id);
 
-        let map_member = TermTuple {
-            term_ids: term
-                .inputs
+        let member = TermIdTuple::new(
+            term.inputs
                 .iter()
                 .enumerate()
                 .map(|(index, input)| match input {
@@ -384,14 +338,10 @@ impl Database {
                         Some(*term_id)
                     }
                 })
-                .collect_in::<Option<_>>(
-                    // `Database`'s drop order ensures this reference is dropped
-                    // before the `DatabaseBump` is dropped
-                    unsafe { self.bump.get() },
-                )?,
-        };
+                .collect::<Option<Vec<_>>>()?,
+        );
 
-        map.map_terms.get(&map_member)
+        map.get_term_id(member.inner())
     }
 
     /// Adds a new term to the database, with a given [type](TypeId).
@@ -417,40 +367,34 @@ impl Database {
         let constant_map = self.new_map(map_signature! { () -> type_id });
 
         Self::insert_map_member(
-            &self.maps[constant_map.member_id().inner()],
+            Self::map_mut_inner(self.id(), &mut self.maps, constant_map),
             &mut self.term_type_table,
-            TermTuple {
-                // `Database`'s drop order ensures this reference is dropped
-                // before the `DatabaseBump` is dropped
-                term_ids: bumpalo::collections::Vec::new_in(unsafe { self.bump.get() }),
-            },
+            TermIdTuple::new([]),
         )
     }
 
     fn search<'a>(
-        bump: &'a Bump,
         maps: &[Map],
         plan: &QueryPlan,
         callback: &mut impl FnMut(BTreeMap<QueryVariable, TermId>),
     ) {
-        plan.produce(bump, maps, callback);
+        todo!()
     }
 
     fn start_pre_run_map_terms(&mut self) {
         for map in &mut self.maps {
-            map.map_terms.start_pre_run_new_map_terms();
+            map.start_pre_run_new_map_terms();
         }
     }
 
     fn end_pre_run_map_terms(&mut self) {
         for map in &mut self.maps {
-            map.map_terms.end_pre_run_new_map_terms();
+            map.end_pre_run_new_map_terms();
         }
     }
 
     pub(crate) fn run_rules_once<'a>(
         &mut self,
-        bump: &'a Bump,
         rules: impl IntoIterator<Item = ExecutableFlatRule<'a>>,
     ) {
         self.end_pre_run_map_terms();
@@ -459,20 +403,14 @@ impl Database {
 
         for rule in rules {
             // TODO: Canonicalize rule query
-            Self::search(bump, &self.maps, &rule.query, &mut |substitution| {
+            Self::search(&self.maps, &rule.query, &mut |substitution| {
                 for payload in rule.payloads {
                     match payload {
                         FlatRulePayload::Creation(term) => {
-                            let inputs = term.substitute(
-                                // `Database`'s drop order ensures this reference is dropped
-                                // before the `DatabaseBump` is dropped
-                                unsafe { self.bump.get() },
-                                &substitution,
-                                &created_terms,
-                            );
+                            let inputs = term.substitute(&substitution, &created_terms);
 
                             created_terms.push(Database::insert_map_member(
-                                &self.maps[term.map_id.member_id().inner()],
+                                Self::map_mut_inner(self.id(), &mut self.maps, term.map_id),
                                 &mut self.term_type_table,
                                 inputs,
                             ));
@@ -632,7 +570,7 @@ impl Database {
     fn rebuild_map(
         term_type_table: &mut TermTable<TypeId>,
         pending_rewrites: &mut Vec<PendingRewrite>,
-        map: &mut MapTerms,
+        map: &mut Map,
         substitution: &BTreeMap<TermId, TermId>,
     ) {
         let mut reinsert_term_tuple =
@@ -662,18 +600,16 @@ impl Database {
 
         let mut index = 0;
 
-        while index < map.pre_run_new_map_terms_range.start {
-            let SeparatedMapTerm { member, .. } = map.get_by_index(index).unwrap();
+        while index < map.pre_run_new_map_terms_range().start {
+            let member = map.get_map_term(index).unwrap().member();
 
             if is_substitution_relevant(member, substitution) {
                 // We move the range one index down. The end will be updated upon rule running.
-                map.pre_run_new_map_terms_range.start -= 1;
+                map.pre_run_new_map_terms_range_mut().start -= 1;
 
-                let newest_old_map_term_index = map.pre_run_new_map_terms_range.start;
+                let newest_old_map_term_index = map.pre_run_new_map_terms_range().start;
 
-                let map_terms = map.as_inner_mut();
-
-                map_terms.swap_indices(index, newest_old_map_term_index);
+                map.swap_indices(index, newest_old_map_term_index);
 
                 reinsert_term_tuple(newest_old_map_term_index, map_terms)
             } else {
@@ -681,7 +617,7 @@ impl Database {
             }
         }
 
-        let mut index = map.pre_run_new_map_terms_range.start;
+        let mut index = map.pre_run_new_map_terms_range().start;
         let mut end = map.len();
 
         while index < end {
@@ -734,7 +670,7 @@ impl Database {
             Self::rebuild_map(
                 &mut self.term_type_table,
                 &mut self.pending_rewrites,
-                &mut map.map_terms,
+                map,
                 &substitution,
             );
         }

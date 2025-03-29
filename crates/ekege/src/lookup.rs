@@ -1,4 +1,4 @@
-rustifact::use_symbols!(BLOOM_FILTER_TAGS);
+ekege_artifact::load_artifacts!();
 
 const SLOT_BITS: u32 = BLOOM_FILTER_TAGS.len().next_power_of_two().trailing_zeros();
 

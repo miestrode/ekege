@@ -120,16 +120,16 @@ pub(crate) fn find_optimal_plan(estimator: &Estimator, query_graph: QueryGraph) 
         let plan_ab = QueryPlan::new(
             estimator,
             JoinExpression::NaturalJoin {
-                expression_a: subplan_a.clone(),
-                expression_b: subplan_b.clone(),
+                node_index_a: subplan_a.clone(),
+                node_index_b: subplan_b.clone(),
             },
         );
 
         let plan_ba = QueryPlan::new(
             estimator,
             JoinExpression::NaturalJoin {
-                expression_a: subplan_b,
-                expression_b: subplan_a,
+                node_index_a: subplan_b,
+                node_index_b: subplan_a,
             },
         );
 

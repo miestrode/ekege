@@ -1,7 +1,7 @@
 //! Items related to the rules used in a [domain](ekege::domain::Domain).
 use std::{collections::BTreeMap, rc::Rc};
 
-use bumpalo::{collections::CollectIn, Bump};
+use bumpalo::{Bump, collections::CollectIn};
 use ekege::discouraged;
 /// Macro for creating a two-way [`rewrite!`] rule. This macro returns a
 /// `[TreeRule; 2]`. Using the two rules stored in the array, provides a two-way
@@ -315,7 +315,6 @@ impl FlatTermPattern {
 
     pub(crate) fn substitute(
         &self,
-        bump: &'static Bump,
         substitution: &BTreeMap<QueryVariable, TermId>,
         created_terms: &[TermId],
     ) -> TermTuple<'static> {
@@ -324,7 +323,7 @@ impl FlatTermPattern {
                 .inputs
                 .iter()
                 .map(|input| input.substitute(substitution, created_terms))
-                .collect_in(bump),
+                .collect(),
         }
     }
 }

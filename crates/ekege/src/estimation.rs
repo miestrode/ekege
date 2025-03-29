@@ -19,8 +19,8 @@ impl<'a> Estimator<'a> {
     pub(crate) fn estimate_cardinality(&self, plan: &JoinExpression) -> f32 {
         match plan {
             JoinExpression::NaturalJoin {
-                expression_a,
-                expression_b,
+                node_index_a: expression_a,
+                node_index_b: expression_b,
             } => Self::SELECTIVITY_ESTIMATE * expression_a.cardinality * expression_b.cardinality,
             JoinExpression::FlatMapTermPattern(pattern) => {
                 self.database.map(pattern.map_id).map_terms.len() as f32
@@ -31,8 +31,8 @@ impl<'a> Estimator<'a> {
     pub(crate) fn estimate_cost(&self, plan: &JoinExpression) -> f32 {
         match plan {
             JoinExpression::NaturalJoin {
-                expression_a,
-                expression_b,
+                node_index_a: expression_a,
+                node_index_b: expression_b,
             } => self.estimate_cardinality(plan) + expression_a.cost + expression_b.cost,
             JoinExpression::FlatMapTermPattern(_) => 0.0,
         }

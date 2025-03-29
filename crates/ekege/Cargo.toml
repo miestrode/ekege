@@ -17,22 +17,24 @@ workspace = true
 [dependencies]
 # Workspace members
 ekege-macros.workspace = true
+ekege-artifact.workspace = true
 
 # Regular dependencies
-indexmap.workspace = true
-either.workspace = true
 rustc-hash.workspace = true
-bumpalo.workspace = true
 hashbrown.workspace = true
 bitfield-struct.workspace = true
-rustifact.workspace = true
+cranelift.workspace = true
+cranelift-jit.workspace = true
 
 [dev-dependencies]
 divan.workspace = true
 rand.workspace = true
 
 [build-dependencies]
-rustifact.workspace = true
+# Workspace members
+ekege-artifact.workspace = true
+
+# Regular dependencies
 rand.workspace = true
 rand_chacha.workspace = true
 
