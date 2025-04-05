@@ -1,8 +1,9 @@
+#![allow(missing_docs)]
 use std::num::NonZeroUsize;
 
 use divan::Bencher;
 use ekege::{database::Database, domain::Domain, map::map_signature, rule::rule, term::term};
-use rand::{Rng, SeedableRng, rngs::StdRng, seq::SliceRandom};
+use rand::{Rng, SeedableRng, rngs::StdRng, seq::IndexedRandom};
 
 const GRAPH_SIZE: usize = 100;
 const MAXIMUM_CYCLES: usize = 10;
@@ -83,23 +84,27 @@ fn generate_random_graph_via_unificiation(
 #[divan::bench]
 fn random_graph_via_rules(bencher: Bencher) {
     bencher
-        .with_inputs(generate_random_graph_via_rules(
-            NonZeroUsize::new(GRAPH_SIZE).unwrap(),
-            MAXIMUM_CYCLES,
-            &mut StdRng::seed_from_u64(SEED),
-        ))
-        .bench(|domain| domain.run_rules(TIMES));
+        .with_inputs(|| {
+            generate_random_graph_via_rules(
+                NonZeroUsize::new(GRAPH_SIZE).unwrap(),
+                MAXIMUM_CYCLES,
+                &mut StdRng::seed_from_u64(SEED),
+            )
+        })
+        .bench_values(|mut domain| domain.run_rules(TIMES));
 }
 
 #[divan::bench]
 fn random_graph_via_unificiation(bencher: Bencher) {
     bencher
-        .with_inputs(generate_random_graph_via_unificiation(
-            NonZeroUsize::new(GRAPH_SIZE).unwrap(),
-            MAXIMUM_CYCLES,
-            &mut StdRng::seed_from_u64(SEED),
-        ))
-        .bench(|database| database.rebuild());
+        .with_inputs(|| {
+            generate_random_graph_via_unificiation(
+                NonZeroUsize::new(GRAPH_SIZE).unwrap(),
+                MAXIMUM_CYCLES,
+                &mut StdRng::seed_from_u64(SEED),
+            )
+        })
+        .bench_values(|mut database| database.rebuild());
 }
 
 fn main() {

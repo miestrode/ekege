@@ -1,7 +1,6 @@
 //! Items related to the rules used in a [domain](ekege::domain::Domain).
-use std::{collections::BTreeMap, rc::Rc};
+use std::collections::BTreeMap;
 
-use bumpalo::{Bump, collections::CollectIn};
 use ekege::discouraged;
 /// Macro for creating a two-way [`rewrite!`] rule. This macro returns a
 /// `[TreeRule; 2]`. Using the two rules stored in the array, provides a two-way
@@ -160,12 +159,12 @@ pub use ekege_macros::rewrite;
 /// ```
 pub use ekege_macros::rule;
 
+use crate::plan::QueryPlan;
 use crate::{
     database::{Database, DatabaseId},
     id::ItemId,
     map::MapId,
-    plan::{DhjExpression, DhjGraph},
-    term::{TermId, TermTuple},
+    term::{TermId, TermIdTuple},
 };
 
 pub(crate) type QueryVariable = ItemId;
@@ -247,30 +246,6 @@ pub(crate) struct FlatQuery {
     pub(crate) map_term_patterns: Vec<FlatMapTermPattern>,
 }
 
-impl FlatQuery {
-    fn into_dhj_expression(self) -> Option<Rc<DhjExpression>> {
-        let mut map_term_patterns = self.map_term_patterns.into_iter();
-
-        let mut expression = Rc::new(DhjExpression::FlatMapTermPattern(Rc::new(
-            map_term_patterns.next()?,
-        )));
-
-        for pattern in map_term_patterns {
-            let lookup = Rc::new(DhjExpression::FlatMapTermPattern(Rc::new(pattern)));
-
-            expression = Rc::new(DhjExpression::Expand {
-                child: Rc::new(DhjExpression::Lookup {
-                    probe: expression,
-                    lookup: lookup.clone(),
-                }),
-                lookup,
-            });
-        }
-
-        Some(expression)
-    }
-}
-
 #[derive(Clone)]
 pub(crate) enum FlatTermPatternInput {
     QueryVariable(QueryVariable),
@@ -317,14 +292,12 @@ impl FlatTermPattern {
         &self,
         substitution: &BTreeMap<QueryVariable, TermId>,
         created_terms: &[TermId],
-    ) -> TermTuple<'static> {
-        TermTuple {
-            term_ids: self
-                .inputs
+    ) -> TermIdTuple {
+        TermIdTuple::new(
+            self.inputs
                 .iter()
-                .map(|input| input.substitute(substitution, created_terms))
-                .collect(),
-        }
+                .map(|input| input.substitute(substitution, created_terms)),
+        )
     }
 }
 
@@ -349,30 +322,16 @@ impl FlatRulePayload {
 }
 
 pub(crate) struct FlatRule {
-    pub(crate) query: Option<Rc<DhjExpression>>,
+    pub(crate) query_plan: QueryPlan,
     pub(crate) payloads: Vec<FlatRulePayload>,
-}
-
-pub(crate) struct ExecutableFlatRule<'a> {
-    pub(crate) query: DhjGraph<'a>,
-    pub(crate) payloads: &'a [FlatRulePayload],
 }
 
 impl FlatRule {
     pub(crate) fn assert_ids_are_local(&self, database_id: DatabaseId) {
-        if let Some(expression) = &self.query {
-            expression.assert_ids_are_local(database_id)
-        }
+        self.query_plan.assert_ids_are_local(database_id);
 
         for payload in &self.payloads {
             payload.assert_ids_are_local(database_id);
-        }
-    }
-
-    pub(crate) fn to_executable(&self) -> ExecutableFlatRule<'_> {
-        ExecutableFlatRule {
-            query: DhjExpression::to_dhj_graph(&self.query),
-            payloads: &self.payloads,
         }
     }
 }
@@ -688,11 +647,13 @@ impl TreeRule {
             let mut new_map_term_patterns = map_term_patterns.clone();
             new_map_term_patterns[index].new_terms_required = true;
 
+            let mut query_plan = QueryPlan::new();
+            query_plan.add_flat_query(FlatQuery {
+                map_term_patterns: new_map_term_patterns,
+            });
+
             FlatRule {
-                query: FlatQuery {
-                    map_term_patterns: new_map_term_patterns,
-                }
-                .into_dhj_expression(),
+                query_plan,
                 payloads: flat_rule_payloads.clone(),
             }
         })

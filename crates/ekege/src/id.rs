@@ -12,6 +12,7 @@ use std::{
 };
 
 use bitfield_struct::bitfield;
+use bytemuck::{AnyBitPattern, NoUninit};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ItemId(usize);
@@ -86,7 +87,7 @@ impl MemberId {
 }
 
 #[bitfield(u32)]
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, NoUninit, AnyBitPattern)]
 struct GroupMemberIdInner {
     #[bits(8)]
     group_id: GroupId,
@@ -98,7 +99,8 @@ struct GroupMemberIdInner {
 /// Others ID types, such as [`TypeId`](ekege::map::TypeId),
 /// [`TermId`](ekege::term::TermId), [`MapId`](ekege::map::MapId),
 /// and more, are aliases of this type.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, NoUninit, AnyBitPattern)]
+#[repr(transparent)]
 pub struct GroupMemberId(GroupMemberIdInner);
 
 impl GroupMemberId {
@@ -126,6 +128,10 @@ impl GroupMemberId {
 
     pub(crate) fn inner(&self) -> u32 {
         self.0.into_bits()
+    }
+
+    pub(crate) fn from_inner(value: u32) -> Self {
+        Self(GroupMemberIdInner::from_bits(value))
     }
 }
 

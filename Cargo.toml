@@ -21,6 +21,7 @@ hashbrown = "0.15.2"
 bitfield-struct = "0.10.1"
 cranelift = { version = "0.118.0", features = ["module", "native"] }
 cranelift-jit = { version = "0.118.0", features = ["selinux-fix"] }
+bytemuck = { version = "1.22.0", features = ["derive"] }
 
 # Macro-related dependencies
 proc-macro2 = "1.0.94"

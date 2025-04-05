@@ -53,7 +53,7 @@ use crate::{
     id::{AtomicGroupIdGenerator, GroupId, GroupMemberId, GroupMemberIdGenerator, MemberId},
     map::{Map, MapId, MapSignature, TypeId, map_signature},
     plan::QueryPlan,
-    rule::{ExecutableFlatRule, FlatRulePayload, QueryVariable},
+    rule::{FlatRule, FlatRulePayload, QueryVariable},
     term::{TermId, TermIdTuple, TermTable, TreeTerm, TreeTermInput, UnifyResult},
 };
 
@@ -208,16 +208,14 @@ impl Database {
         *self.term_type_table.get(term_id)
     }
 
-    fn insert_map_member<I: Iterator<Item = TermId>>(
-        map: &mut Map,
-        member: impl FnOnce(&mut Map, &mut TermTable<TypeId>) -> I,
+    fn insert_map_member(
         term_type_table: &mut TermTable<TypeId>,
+        map: &mut Map,
+        member: &[TermId],
     ) -> TermId {
         let output_type_id = map.signature().output_type_id();
 
-        map.get_term_id_or_insert_with(member, term_type_table, |term_type_table| {
-            term_type_table.insert_term(output_type_id)
-        })
+        map.get_term_id_or_insert_with(member, || term_type_table.insert_term(output_type_id))
     }
 
     fn map_inner(database_id: DatabaseId, maps: &[Map], map_id: MapId) -> &Map {
@@ -246,20 +244,32 @@ impl Database {
         term_type_table: &mut TermTable<TypeId>,
         term: &TreeTerm,
     ) -> TermId {
-        let member = term.inputs.iter().map(|input| match input {
+        let member = TermIdTuple::new(term.inputs.iter().map(|input| match input {
             TreeTermInput::TreeTerm(term) => {
                 Self::new_term_inner(database_id, maps, term_type_table, term)
             }
             TreeTermInput::TermId(term_id) => {
                 Self::canonicalize_inner(database_id, term_type_table, *term_id)
             }
-        });
+        }));
 
-        Self::insert_map_member(
-            Self::map_mut_inner(database_id, maps, term.map_id),
-            term_type_table,
-            member,
-        )
+        let map = Self::map_mut_inner(database_id, maps, term.map_id);
+
+        assert_eq!(
+            map.signature().input_type_ids().len(),
+            member.len(),
+            "invalid argument count for map"
+        );
+
+        assert!(
+            member
+                .iter()
+                .zip(map.signature().input_type_ids().iter())
+                .all(|(term_id, type_id)| term_type_table.get(term_id) == type_id),
+            "mismatching types for map"
+        );
+
+        Self::insert_map_member(term_type_table, map, member.inner())
     }
 
     /// Adds a new term to this database and returns its [term ID](TermId). The
@@ -366,10 +376,12 @@ impl Database {
 
         let constant_map = self.new_map(map_signature! { () -> type_id });
 
+        let database_id = self.id();
+
         Self::insert_map_member(
-            Self::map_mut_inner(self.id(), &mut self.maps, constant_map),
             &mut self.term_type_table,
-            TermIdTuple::new([]),
+            Self::map_mut_inner(database_id, &mut self.maps, constant_map),
+            &[],
         )
     }
 
@@ -393,26 +405,29 @@ impl Database {
         }
     }
 
-    pub(crate) fn run_rules_once<'a>(
-        &mut self,
-        rules: impl IntoIterator<Item = ExecutableFlatRule<'a>>,
-    ) {
+    pub(crate) fn run_rules_once<'a>(&mut self, rules: impl IntoIterator<Item = &'a FlatRule>) {
         self.end_pre_run_map_terms();
 
         let mut created_terms = Vec::new();
 
         for rule in rules {
+            let mut substitutions = Vec::new();
+
             // TODO: Canonicalize rule query
-            Self::search(&self.maps, &rule.query, &mut |substitution| {
-                for payload in rule.payloads {
+            Self::search(&self.maps, &rule.query_plan, &mut |substitution| {
+                substitutions.push(substitution)
+            });
+
+            for substitution in substitutions {
+                for payload in &rule.payloads {
                     match payload {
                         FlatRulePayload::Creation(term) => {
                             let inputs = term.substitute(&substitution, &created_terms);
 
                             created_terms.push(Database::insert_map_member(
-                                Self::map_mut_inner(self.id(), &mut self.maps, term.map_id),
                                 &mut self.term_type_table,
-                                inputs,
+                                Self::map_mut_inner(self.id, &mut self.maps, term.map_id),
+                                inputs.inner(),
                             ));
                         }
                         FlatRulePayload::Union(argument_a, argument_b) => {
@@ -427,7 +442,7 @@ impl Database {
                 }
 
                 created_terms.clear();
-            });
+            }
         }
 
         self.start_pre_run_map_terms();
@@ -573,21 +588,19 @@ impl Database {
         map: &mut Map,
         substitution: &BTreeMap<TermId, TermId>,
     ) {
-        let mut reinsert_term_tuple =
-            |index, map_terms: &mut FxIndexMap<TermTuple<'static>, TermId>| {
-                let (mut term_tuple, term_id) = map_terms.swap_remove_index(index).unwrap();
+        let mut reinsert_term_tuple = |index, map: &mut Map| {
+            // TODO: This is a bit inefficient: consider reworking this
+            let (mut term_tuple, term_id) = map.swap_remove(index);
 
-                term_tuple.substitute(substitution);
+            term_tuple.substitute(substitution);
 
-                if let Some(conflicting_term_id) = map_terms.insert(term_tuple, term_id) {
-                    Self::unify_inner(
-                        term_type_table,
-                        pending_rewrites,
-                        term_id,
-                        conflicting_term_id,
-                    );
-                }
-            };
+            Self::unify_inner(
+                term_type_table,
+                pending_rewrites,
+                term_id,
+                map.get_term_id_or_insert_with(term_tuple.inner(), || term_id),
+            );
+        };
 
         fn is_substitution_relevant(
             member: &[GroupMemberId],
@@ -601,7 +614,7 @@ impl Database {
         let mut index = 0;
 
         while index < map.pre_run_new_map_terms_range().start {
-            let member = map.get_map_term(index).unwrap().member();
+            let member = map.get_map_term_arguments(index).unwrap();
 
             if is_substitution_relevant(member, substitution) {
                 // We move the range one index down. The end will be updated upon rule running.
@@ -611,7 +624,7 @@ impl Database {
 
                 map.swap_indices(index, newest_old_map_term_index);
 
-                reinsert_term_tuple(newest_old_map_term_index, map_terms)
+                reinsert_term_tuple(newest_old_map_term_index, map)
             } else {
                 index += 1;
             }
@@ -621,10 +634,10 @@ impl Database {
         let mut end = map.len();
 
         while index < end {
-            let SeparatedMapTerm { member, .. } = map.get_by_index(index).unwrap();
+            let arguments = map.get_map_term_arguments(index).unwrap();
 
-            if is_substitution_relevant(member, substitution) {
-                reinsert_term_tuple(index, map.as_inner_mut());
+            if is_substitution_relevant(arguments, substitution) {
+                reinsert_term_tuple(index, map);
 
                 end -= 1;
             } else {

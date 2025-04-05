@@ -1,5 +1,6 @@
+#![allow(missing_docs)]
 use ekege::{database::Database, domain::Domain, map::map_signature, rule::rule, term::term};
-use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
+use rand::{SeedableRng, rngs::StdRng, seq::IndexedRandom};
 
 const GRAPH_SIZE: usize = 100;
 const MAXIMUM_CYCLES: usize = 10;
@@ -51,15 +52,19 @@ fn test_graph() {
     for first_node_index in 0..GRAPH_SIZE - OFFSET {
         let (first_node, second_node) = (nodes[first_node_index], nodes[first_node_index + OFFSET]);
 
-        assert!(domain
-            .database()
-            .term_id(&term! { path(first_node, second_node) })
-            .is_some());
+        assert!(
+            domain
+                .database()
+                .term_id(&term! { path(first_node, second_node) })
+                .is_some()
+        );
 
-        assert!(domain
-            .database()
-            .term_id(&term! { path(second_node, first_node) })
-            .is_some());
+        assert!(
+            domain
+                .database()
+                .term_id(&term! { path(second_node, first_node) })
+                .is_some()
+        );
     }
 }
 

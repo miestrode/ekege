@@ -87,7 +87,7 @@
 //!     skeleton using [`term!`](term::term)
 //! - Construct a new [domain](domain::Domain) from your set of rules defined
 //!   earlier, and the database. You will still be able to access the database
-//!   by using the [`Domain::database`](domain::Domain::database) field
+//!   by using [`Domain::database`](domain::Domain::database)
 //! - Using the domain to run the rules on the database, with
 //!   [`Domain::run_rules`](domain::Domain::run_rules)
 //!
@@ -129,7 +129,6 @@
 //! ```
 extern crate self as ekege;
 
-#[macro_export]
 macro_rules! discouraged {
     ($item:ident, $path:path) => {
         concat!(
@@ -150,18 +149,17 @@ macro_rules! discouraged {
     };
 }
 
+pub(crate) use discouraged;
+
 #[doc = discouraged!(rule, ekege::rule::rule)]
 fn x() {}
 
 pub mod database;
 pub mod domain;
-mod estimation;
-mod graph;
 pub mod id;
 mod join;
 mod lookup;
 pub mod map;
-mod optimizer;
 mod plan;
 pub mod rule;
 pub mod term;

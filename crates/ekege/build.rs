@@ -96,7 +96,7 @@ fn main() {
     let mut rng = get_rng();
 
     ekege_artifact::store_artifact(
-        format_ident!("BLOOM_FILTER_TAG"),
+        format_ident!("BLOOM_FILTER_TAGS"),
         generate_bloom_filter_tags(&mut rng),
     );
 

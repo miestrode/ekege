@@ -1,7 +1,18 @@
 //! Items related to the maps used in a [database](ekege::database::Database).
 use std::{
+    alloc::Layout,
     hash::{BuildHasher, Hash, Hasher},
+    mem,
     ops::Range,
+};
+
+use hashbrown::HashTable;
+use rustc_hash::FxBuildHasher;
+
+use crate::{
+    discouraged,
+    id::GroupMemberId,
+    term::{TermId, TermIdTuple},
 };
 
 /// Creates a new [map signature](MapSignature), using [type ID](TypeId)s in the
@@ -71,14 +82,6 @@ use std::{
 /// let is_dark_red_bright = database.term_id(&term! { bright_map(dark_red) }).is_some();
 /// ```
 pub use ekege_macros::map_signature;
-use hashbrown::{HashTable, hash_table::Entry};
-use rustc_hash::FxBuildHasher;
-
-use crate::{
-    discouraged,
-    id::GroupMemberId,
-    term::{TermId, TermTable},
-};
 
 /// An ID to identify a type in a [database](ekege::database::Database).
 pub type TypeId = GroupMemberId;
@@ -113,37 +116,63 @@ impl MapSignature {
     pub(crate) fn output_type_id(&self) -> GroupMemberId {
         self.output_type_id
     }
+
+    fn map_term_layout(&self) -> Layout {
+        Layout::new::<u64>()
+            .extend(Layout::array::<TermId>(self.input_type_ids().len()).unwrap())
+            .unwrap()
+            .0
+            .extend(Layout::new::<u64>())
+            .unwrap()
+            .0
+            .pad_to_align()
+    }
+
+    fn u32s_in_map_term(&self) -> usize {
+        // Two for the 64-bit hash, 1 for the term id
+        2 + self.input_type_ids().len() + 1
+    }
 }
 
 struct MapTermReference<'a> {
-    term_ids: &'a [TermId],
+    u32s: &'a [u32],
 }
 
 impl<'a> MapTermReference<'a> {
-    fn new(term_ids: &'a [TermId]) -> Self {
-        Self { term_ids }
+    fn from_u32s(u32s: &'a [u32]) -> Self {
+        Self { u32s }
     }
 
-    fn inner(&self) -> &[TermId] {
-        self.term_ids
+    fn fields(&self) -> (u64, &'a [TermId], TermId) {
+        let [hash_lower, hash_upper, arguments @ .., term_id] = self.u32s else {
+            unreachable!()
+        };
+
+        let hash = (*hash_upper as u64) << 32 | *hash_lower as u64;
+
+        (
+            hash,
+            bytemuck::cast_slice(arguments),
+            GroupMemberId::from_inner(*term_id),
+        )
     }
 
-    fn argument_count(&self) -> usize {
-        self.term_ids.len() - 1
+    fn hash(&self) -> u64 {
+        self.fields().0
     }
 
-    pub(crate) fn member(&self) -> &[TermId] {
-        &self.term_ids[..self.argument_count()]
+    fn arguments(&self) -> &'a [TermId] {
+        self.fields().1
     }
 
-    pub(crate) fn term_id(&self) -> TermId {
-        self.term_ids[self.argument_count()]
+    fn term_id(&self) -> TermId {
+        self.fields().2
     }
 }
 
 pub(crate) struct Map {
     index_map: HashTable<usize>,
-    term_ids: Vec<TermId>,
+    u32s: Vec<u32>,
     signature: MapSignature,
     pre_run_new_map_terms_range: Range<usize>,
     hash_builder: FxBuildHasher,
@@ -153,7 +182,7 @@ impl Map {
     pub(crate) fn new(signature: MapSignature) -> Self {
         Self {
             index_map: HashTable::new(),
-            term_ids: Vec::new(),
+            u32s: Vec::new(),
             signature,
             pre_run_new_map_terms_range: 0..0,
             hash_builder: FxBuildHasher,
@@ -170,18 +199,27 @@ impl Map {
 
     fn get_map_term_inner<'a>(
         signature: &MapSignature,
-        term_ids: &'a [TermId],
-        index: usize,
+        u32s: &'a [u32],
+        base: usize,
     ) -> Option<MapTermReference<'a>> {
-        let map_term_ids = index + signature.input_type_ids().len() + 1;
-
-        term_ids
-            .get(index..index + map_term_ids)
-            .map(MapTermReference::new)
+        u32s.get(base..base + signature.u32s_in_map_term())
+            .map(|u32s| MapTermReference::from_u32s(u32s))
     }
 
-    pub(crate) fn get_map_term(&self, index: usize) -> Option<MapTermReference> {
-        Self::get_map_term_inner(&self.signature, &self.term_ids, index)
+    fn get_map_term(&self, index: usize) -> Option<MapTermReference<'_>> {
+        Self::get_map_term_inner(self.signature(), &self.u32s, index)
+    }
+
+    fn get_map_term_arguments_inner<'a>(
+        signature: &MapSignature,
+        u32s: &'a [u32],
+        index: usize,
+    ) -> Option<&'a [TermId]> {
+        Self::get_map_term_inner(signature, u32s, index).map(|map_term| map_term.arguments())
+    }
+
+    pub(crate) fn get_map_term_arguments(&self, index: usize) -> Option<&[TermId]> {
+        Self::get_map_term_arguments_inner(self.signature(), &self.u32s, index)
     }
 
     fn hash_member_inner(
@@ -207,78 +245,86 @@ impl Map {
                 self.hash_member(member.iter().copied()),
                 |&possible_index| {
                     // TODO: Check if unchecked is better
-                    self.get_map_term(possible_index).unwrap().member() == member
+                    self.get_map_term_arguments(possible_index).unwrap() == member
                 },
             )
             .copied()
-            .map(|index| self.term_ids[index])
+            .and_then(|index| self.get_map_term(index))
+            .map(|entry| entry.term_id())
     }
 
-    pub(crate) fn get_term_id_or_insert_with<I: Iterator<Item = TermId>>(
+    pub(crate) fn get_term_id_or_insert_with(
         &mut self,
-        member: impl FnOnce(&mut Map, &mut TermTable<TypeId>) -> I,
-        term_type_table: &mut TermTable<TypeId>,
-        with_term_id: impl FnOnce(&mut TermTable<TypeId>) -> TermId,
+        member: &[TermId],
+        with_term_id: impl FnOnce() -> TermId,
     ) -> TermId {
-        self.term_ids.extend(member(self, term_type_table));
+        let member_hash = self.hash_member(member.iter().copied());
         let new_index = self.len();
 
-        let member = &self.term_ids[new_index..];
-
-        assert_eq!(
-            self.signature().input_type_ids().len(),
-            member.len(),
-            "invalid argument count for map"
-        );
-
-        assert!(
-            member
-                .iter()
-                .zip(self.signature().input_type_ids().iter())
-                .all(|(term_id, type_id)| term_type_table.get(*term_id) == type_id),
-            "mismatching types for map"
-        );
-
-        let member_hash = self.hash_member(member.iter().copied());
-
-        let index = match self.index_map.entry(
-            member_hash,
-            |&possible_index| {
-                // TODO: Check if unchecked is better
-                Self::get_map_term_inner(&self.signature, &self.term_ids, possible_index)
-                    .unwrap()
-                    .member()
-                    == member
-            },
-            |&index| {
-                Self::hash_member_inner(
-                    self.hash_builder,
-                    Self::get_map_term_inner(&self.signature, &self.term_ids, index)
+        let index = *self
+            .index_map
+            .entry(
+                member_hash,
+                |&possible_index| {
+                    // TODO: Check if unchecked is better
+                    Self::get_map_term_arguments_inner(&self.signature, &self.u32s, possible_index)
                         .unwrap()
-                        .member()
-                        .iter()
-                        .copied(),
-                )
-            },
-        ) {
-            Entry::Occupied(occupied_entry) => {
-                self.term_ids.truncate(new_index);
+                        == member
+                },
+                |&index| {
+                    Self::hash_member_inner(
+                        self.hash_builder,
+                        Self::get_map_term_arguments_inner(&self.signature, &self.u32s, index)
+                            .unwrap()
+                            .iter()
+                            .copied(),
+                    )
+                },
+            )
+            .or_insert_with(|| {
+                let hash_lower = member_hash as u32;
+                let hash_upper = member_hash as u32 >> 32;
 
-                *occupied_entry.get()
-            }
-            Entry::Vacant(vacant_entry) => {
-                vacant_entry.insert(new_index);
-                self.term_ids.push(with_term_id(term_type_table));
+                self.u32s.extend([hash_lower, hash_upper]);
+                self.u32s
+                    .extend(bytemuck::cast_slice::<_, u32>(member).iter().copied());
+                self.u32s.push(with_term_id().inner());
 
                 new_index
-            }
-        };
+            })
+            .get();
 
         self.get_map_term(index).unwrap().term_id()
     }
 
     pub(crate) fn swap_indices(&mut self, index_a: usize, index_b: usize) {
-        self.term_ids.swap(index_a, index_b);
+        let hash_a = self.get_map_term(index_a).unwrap().hash();
+        let hash_b = self.get_map_term(index_b).unwrap().hash();
+
+        let indices = [index_a, index_b];
+        let [Some(index_a_location), Some(index_b_location)] = self
+            .index_map
+            .get_many_mut([hash_a, hash_b], |lookup_index, index| {
+                *index == indices[lookup_index]
+            })
+        else {
+            unreachable!()
+        };
+        mem::swap(index_a_location, index_b_location);
+
+        // TODO: Check if this gets optimized
+        for offset in 0..self.signature().u32s_in_map_term() {
+            self.u32s.swap(index_a + offset, index_b + offset);
+        }
+    }
+
+    pub(crate) fn swap_remove(&mut self, index: usize) -> (TermIdTuple, TermId) {
+        let map_term = self.get_map_term(index).unwrap();
+
+        (
+            TermIdTuple::new(map_term.arguments().iter().copied()),
+            map_term.term_id(),
+        )
     }
 
     pub(crate) fn start_pre_run_new_map_terms(&mut self) {
