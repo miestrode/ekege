@@ -1,7 +1,13 @@
 [package]
 name = "ekege-artifact"
+version.workspace = true
+description = "General-purpose build artifact generation crate"
+authors = ["Yoav Grimland <miestrode@proton.me>"]
 rust-version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
 
 [dependencies]
 quote.workspace = true

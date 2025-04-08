@@ -1,13 +1,68 @@
-//! `ekege-artifact` is a utility crate for storing and loading compile-time artifacts in Rust.
+//! General-purpose build artifact generation crate, used in [Ekege](https://docs.rs/ekege/)'s build script.
+//!
 //! It provides a mechanism to generate and store arbitrary data during the build process
 //! (typically in a [`build.rs`](https://doc.rust-lang.org/cargo/reference/build-scripts.html) script)
 //! and then load that data at compile time in your main crate code.
 //!
-//! ## Usage
+//! # Usage
 //!
-//! First, implement the [`Artifact`](Artifact) trait for your custom types. Then use
-//! [`store_artifact`](store_artifact) in your build script to serialize them, and [`load_artifacts!`](load_artifacts)
-//! in your main code to make the constants available.
+//! First, implement the [`Artifact`] trait for your custom types. Then use [`store_artifact`] in your
+//! build script to serialize them, and [`load_artifacts!`] in your main code to make the constants available.
+//!
+//! # Examples
+//!
+//! Given an [artifact](Artifact) `MyVec`:
+//!
+//! ```
+//! # use ekege_artifact::{Artifact ToTokens, quote, TokenStream, TokenStreamExt};
+//! #
+//! struct MyVec(Vec<u16>);
+//!
+//! // Store `MyVec`'s data using tokens, as a build artifact
+//! impl ToTokens for MyVec {
+//!     fn to_tokens(&self, tokens: &mut TokenStream) {
+//!         let items = &self.0;
+//!
+//!         tokens.append_all(quote! { [#(#items),*] });
+//!     }
+//! }
+//!
+//! // Get `MyVec`'s build artifact type, as tokens
+//! impl Artifact for MyVec {
+//!     fn generate_type(&self) -> impl ToTokens {
+//!         let length = self.0.len();
+//!
+//!         quote! { [u16; #length] }
+//!     }
+//! }
+//! ```
+//!
+//! We can store it using [`store_artifact`] like so:
+//!
+//! ```no_run
+//! # use ekege_artifact::{}
+//! #
+//! ekege_artifact::store_artifact(
+//!     format_ident!("MY_VEC"),
+//!     MyVec(vec![1, 2, 3]),
+//! );
+//! ```
+//!
+//! At this point, the stored artifact will look somewhat like:
+//!
+//! ```
+//! const MY_VEC: [u16; 3] = [1, 2, 3];
+//! ```
+//!
+//! Using [`load_artifacts!`] we can then use that artifact in our main crate code:
+//!
+//! ```no_run
+//! # use ekege_artifact::load_artifacts;
+//! #
+//! load_artifacts!();
+//!
+//! println!("{}", MY_VEC[0]);
+//! ```
 use std::{
     env,
     fs::OpenOptions,
@@ -20,6 +75,8 @@ use std::{
 ///
 /// This macro provides a consistent way to reference the artifact file
 /// across the crate's public API.
+///
+/// Currently, the artifact file name is `ekege-artifact.rs`.
 #[macro_export]
 macro_rules! artifact_file {
     () => {
@@ -35,6 +92,32 @@ pub use quote::{ToTokens, TokenStreamExt, format_ident, quote};
 ///
 /// Implementors must be able to generate their own type representation
 /// and convert themselves to a token stream.
+///
+/// # Example
+///
+/// ```
+/// # use ekege_artifact::{Artifact ToTokens, quote, TokenStream, TokenStreamExt};
+/// #
+/// struct MyVec(Vec<u16>);
+///
+/// // Store `MyVec`'s data using tokens, as a build artifact
+/// impl ToTokens for MyVec {
+///     fn to_tokens(&self, tokens: &mut TokenStream) {
+///         let items = &self.0;
+///
+///         tokens.append_all(quote! { [#(#items),*] });
+///     }
+/// }
+///
+/// // Get `MyVec`'s build artifact type, as tokens
+/// impl Artifact for MyVec {
+///     fn generate_type(&self) -> impl ToTokens {
+///         let length = self.0.len();
+///
+///         quote! { [u16; #length] }
+///     }
+/// }
+/// ```
 pub trait Artifact: ToTokens {
     /// Generates a token representation of this artifact's type.
     ///
@@ -54,6 +137,10 @@ static IS_FIRST_USE: AtomicBool = AtomicBool::new(true);
 ///
 /// Beyond panicking upon IO errors, this function will panic when not run in a build script
 /// (or if the `OUT_DIR` environment variable is otherwise unavailable).
+///
+/// # Examples
+///
+/// See [this](crate) for a full usage example.
 pub fn store_artifact<A: Artifact>(name: Ident, value: A) {
     let value_type = value.generate_type();
 
@@ -67,7 +154,7 @@ pub fn store_artifact<A: Artifact>(name: Ident, value: A) {
         .open(PathBuf::from(env::var("OUT_DIR").expect("get OUT_DIR value")).join(artifact_file!()))
         .expect("open artifact file");
     file.write_all(
-        quote! { pub const #name: #value_type = #value; }
+        quote! { const #name: #value_type = #value; }
             .to_token_stream()
             .to_string()
             .as_bytes(),
@@ -82,18 +169,7 @@ pub fn store_artifact<A: Artifact>(name: Ident, value: A) {
 ///
 /// # Examples
 ///
-/// In your build script:
-/// ```no_run
-/// store_artifact(format_ident!("BIG_TABLE"), /* ... */);
-/// store_artifact(format_ident!("IMPORTANT_VALUE"), /* ... */);
-/// ```
-///
-/// ```no_run
-/// // Load all artifacts from build script
-/// load_artifacts!();
-///
-/// println!("big table: {BIG_TABLE}, important value: {IMPORTANT_VALUE}");
-/// ```
+/// See [this](crate) for a full usage example.
 #[macro_export]
 macro_rules! load_artifacts {
     () => {

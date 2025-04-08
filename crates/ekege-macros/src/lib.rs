@@ -1,20 +1,23 @@
 #![allow(missing_docs)]
 //! Procedural macros to be re-exported in [Ekege](https://docs.rs/ekege/).
 //!
-//! This crate should not be used directly! It is highly recommended that you
-//! use Ekege instead.
+//! Due to some Rustdoc limitations, the documentation for the macros defined here is
+//! in the Ekege crate.
 //!
-//! Due to some Rustdoc limitations, the documentation.
+//! <div class="warning">
+//!     This crate should not be used directly! It is highly recommended that you
+//!     use the macros from Ekege directly instead.
+//! </div>
 use std::{env, sync::LazyLock};
 
 use equivalence::Equivalence;
 use map::MapSignature;
+use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::Span;
-use proc_macro_crate::{crate_name, FoundCrate};
-use quote::{quote, ToTokens, TokenStreamExt};
+use quote::{ToTokens, TokenStreamExt, quote};
 use rewrite::Rewrite;
 use rule::TreeRule;
-use syn::{parse_macro_input, Ident};
+use syn::{Ident, parse_macro_input};
 use term::TreeTerm;
 
 mod equivalence;

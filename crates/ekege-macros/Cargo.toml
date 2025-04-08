@@ -1,6 +1,6 @@
 [package]
 name = "ekege-macros"
-version = "0.1.0"
+version.workspace = true
 description = "Procedural macros for Ekege: An E-graph library that's built like a database"
 authors = ["Yoav Grimland <miestrode@proton.me>"]
 rust-version.workspace = true
