@@ -1,7 +1,7 @@
 <div align=center>
     <picture>
-        <source srcset="https://raw.githubusercontent.com/miestrode/ekege/assets/logo%20(dark).svg" media="(prefers-color-scheme: dark)"/>
-        <img alt="Ekege logo" src="https://raw.githubusercontent.com/miestrode/ekege/assets/logo%20(light).svg.svg"/>
+        <source srcset="https://raw.githubusercontent.com/miestrode/ekege/main/assets/logo%20(dark).svg" media="(prefers-color-scheme: dark)"/>
+        <img alt="Ekege logo" src="https://raw.githubusercontent.com/miestrode/ekege/main/assets/logo%20(light).svg.svg"/>
     </picture>
     <hr/>
 </div>
