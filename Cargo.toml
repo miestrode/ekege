@@ -19,24 +19,24 @@ ekege-artifact = { path = "./crates/ekege-artifact" }
 
 # Regular dependencies
 rustc-hash = "2.1.1"
-hashbrown = "0.15.2"
-bitfield-struct = "0.10.1"
-cranelift = { version = "0.118.0", features = ["module", "native"] }
-cranelift-jit = { version = "0.118.0", features = ["selinux-fix"] }
-bytemuck = { version = "1.22.0", features = ["derive"] }
+hashbrown = "0.15.3"
+bitfield-struct = "0.11.0"
+cranelift = { version = "0.120.0", features = ["module", "native"] }
+cranelift-jit = { version = "0.120.0", features = ["selinux-fix"] }
+bytemuck = { version = "1.23.0", features = ["derive"] }
 
 # Macro-related dependencies
-proc-macro2 = "1.0.94"
+proc-macro2 = "1.0.95"
 quote = "1.0.40"
-syn = "2.0.100"
+syn = "2.0.101"
 proc-macro-crate = "3.3.0"
 
 # Build dependencies
-rand = "0.9.0"
+rand = "0.9.1"
 rand_chacha = "0.9.0"
 
 # Development dependenecies
-divan = { version = "0.1.17" }
+divan = { version = "0.1.21" }
 
 [workspace.lints.rust]
 missing_docs = "warn"

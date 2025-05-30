@@ -172,7 +172,7 @@ impl Default for AtomicGroupIdGenerator {
 impl AtomicGroupIdGenerator {
     pub(crate) const fn new() -> Self {
         Self {
-            current_id: AtomicU8::new(0),
+            current_id: AtomicU8::new(1),
         }
     }
 

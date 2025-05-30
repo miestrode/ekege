@@ -150,9 +150,8 @@ macro_rules! discouraged {
 }
 
 pub(crate) use discouraged;
-
-#[doc = discouraged!(rule, ekege::rule::rule)]
-fn x() {}
+use plan::{Jit, QueryPlan};
+use rule::FlatQuery;
 
 pub mod database;
 pub mod domain;
@@ -163,3 +162,23 @@ pub mod map;
 mod plan;
 pub mod rule;
 pub mod term;
+
+#[allow(missing_docs)]
+pub fn testy_thing() {
+    use database::Database;
+    use map::map_signature;
+    use rule::rule;
+
+    let mut database = Database::new();
+
+    let node = database.new_type();
+    let unit = database.new_type();
+
+    let path = database.new_map(map_signature! { (node, node) -> unit });
+
+    let woah = rule! { path('x, 'y), path('y, 'z) -> path('x, 'z) };
+
+    let rules = woah.to_flat_rules().collect::<Vec<_>>();
+
+    Jit::default().generate_query_plan(&rules[0].query_plan);
+}

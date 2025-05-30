@@ -283,7 +283,7 @@ impl Map {
             )
             .or_insert_with(|| {
                 let hash_lower = member_hash as u32;
-                let hash_upper = member_hash as u32 >> 32;
+                let hash_upper = (member_hash >> 32) as u32;
 
                 self.u32s.extend([hash_lower, hash_upper]);
                 self.u32s
